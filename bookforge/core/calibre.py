@@ -82,9 +82,10 @@ def parse_calibre_progress(output_chunk: str) -> int | None:
     return int(matches[-1]) if matches else None
 
 
-def find_ebook_convert() -> Path | None:
-    """Find ``ebook-convert`` in PATH or common Windows install locations."""
-    located = shutil.which("ebook-convert") or shutil.which("ebook-convert.exe")
+def find_calibre_tool(tool_name: str) -> Path | None:
+    """Find a Calibre CLI tool in PATH or common Windows locations."""
+    executable_name = tool_name if tool_name.lower().endswith(".exe") else f"{tool_name}.exe"
+    located = shutil.which(tool_name) or shutil.which(executable_name)
     if located:
         return Path(located).resolve()
 
@@ -100,12 +101,20 @@ def find_ebook_convert() -> Path | None:
         base = Path(root)
         candidates.extend(
             (
-                base / "Calibre2" / "ebook-convert.exe",
-                base / "Programs" / "calibre" / "ebook-convert.exe",
+                base / "Calibre2" / executable_name,
+                base / "Programs" / "calibre" / executable_name,
             )
         )
 
     return next((path.resolve() for path in candidates if path.is_file()), None)
+
+
+def find_ebook_convert() -> Path | None:
+    return find_calibre_tool("ebook-convert")
+
+
+def find_ebook_meta() -> Path | None:
+    return find_calibre_tool("ebook-meta")
 
 
 class CalibreAdapter:
@@ -137,8 +146,22 @@ class CalibreAdapter:
         *,
         cancel_event: Event | None = None,
         on_output: Callable[[str], None] | None = None,
+        arguments: tuple[str, ...] = (),
     ) -> CalibreRunResult:
         command = self.build_command(input_path, output_path)
+        command.extend(arguments)
+        return self.run_command(
+            command, cancel_event=cancel_event, on_output=on_output
+        )
+
+    def run_command(
+        self,
+        command: list[str],
+        *,
+        cancel_event: Event | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> CalibreRunResult:
+        """Run an explicit Calibre command with streaming and cancellation."""
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
         try:

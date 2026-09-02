@@ -13,6 +13,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from bookforge.core.converter import ConversionResult, ConverterService
+from bookforge.core.metadata import MetadataStatus
 from bookforge.core.queue import QueueStatus
 from bookforge.ui.drop_area import DropArea
 from bookforge.ui.batch_worker import BatchCancellation
@@ -24,6 +25,23 @@ class AvailableAdapter:
     executable = Path(__file__)
 
 
+class UnavailableMetadataService:
+    available = False
+
+    def __init__(self) -> None:
+        self.cleaned: list[str] = []
+        self.closed = False
+
+    def cleanup_item(self, item_id: str) -> None:
+        self.cleaned.append(item_id)
+
+    def clear_replacement_cover(self, _item_id: str) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class MainWindowQueueTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -31,7 +49,10 @@ class MainWindowQueueTests(unittest.TestCase):
 
     def setUp(self) -> None:
         converter = ConverterService(AvailableAdapter())  # type: ignore[arg-type]
-        self.window = MainWindow(converter)
+        self.metadata_service = UnavailableMetadataService()
+        self.window = MainWindow(
+            converter, metadata_service=self.metadata_service  # type: ignore[arg-type]
+        )
         self.window._show_warning = lambda _message: None  # type: ignore[method-assign]
 
     def tearDown(self) -> None:
@@ -58,6 +79,44 @@ class MainWindowQueueTests(unittest.TestCase):
             self.assertEqual(
                 self.window._drop_area._title.text(), "Drop more books here"
             )
+
+    def test_metadata_failure_does_not_block_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Book.epub"
+            source.write_bytes(b"book")
+
+            self.window._add_files([source])
+
+            item = self.window._queue.items[0]
+            item.metadata_status = MetadataStatus.LOADING
+            self.window._metadata_failed(item.item_id, "Calibre could not read it")
+            self.assertEqual(item.metadata_status.value, "Unavailable")
+            self.assertTrue(self.window._convert_button.isEnabled())
+            self.assertEqual(
+                self.window._row_widgets[item.item_id]._metadata.toolTip(),
+                "Calibre could not read it",
+            )
+
+    def test_remove_and_clear_clean_only_their_metadata_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = [root / "First.epub", root / "Second.fb2"]
+            for source in sources:
+                source.write_bytes(b"book")
+            self.window._add_files(sources)
+            first_id, second_id = (
+                item.item_id for item in self.window._queue.items
+            )
+
+            self.window._remove_item(first_id)
+            self.assertEqual(self.metadata_service.cleaned, [first_id])
+            self.assertIsNotNone(self.window._queue.get(second_id))
+
+            self.window._clear_queue()
+            self.assertEqual(
+                self.metadata_service.cleaned, [first_id, second_id]
+            )
+            self.assertEqual(len(self.window._queue), 0)
 
     def test_global_format_and_duplicate_skip(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

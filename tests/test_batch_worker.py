@@ -28,6 +28,7 @@ class RecordingConverter:
         overwrite: bool = False,
         cancel_event=None,
         on_output=None,
+        metadata_overrides=None,
     ) -> ConversionResult:
         self.calls.append(source_path.name)
         if self.emit_output and on_output is not None:

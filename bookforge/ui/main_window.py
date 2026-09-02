@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
+from threading import Event
 
-from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Slot
+from PySide6.QtCore import QThread, QThreadPool, QTimer, Qt, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
@@ -37,11 +39,21 @@ from bookforge.core.converter import (
     ConverterService,
 )
 from bookforge.core.queue import ConversionQueue, QueueItem, QueueStatus
+from bookforge.core.metadata import (
+    BookMetadata,
+    MetadataError,
+    MetadataLoadResult,
+    MetadataOverrides,
+    MetadataService,
+    MetadataStatus,
+)
 from bookforge.ui.batch_worker import (
     BatchCancellation,
     BatchConversionWorker,
 )
 from bookforge.ui.drop_area import DropArea
+from bookforge.ui.metadata_dialog import MetadataDialog
+from bookforge.ui.metadata_worker import MetadataLoadTask
 from bookforge.ui.queue_item_widget import QueueItemWidget
 
 
@@ -54,10 +66,20 @@ _RETRYABLE_STATUSES = (
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, converter: ConverterService | None = None) -> None:
+    def __init__(
+        self,
+        converter: ConverterService | None = None,
+        metadata_service: MetadataService | None = None,
+    ) -> None:
         super().__init__()
         self._converter = converter or ConverterService()
         self._queue = ConversionQueue()
+        self._metadata_service = metadata_service or MetadataService()
+        self._metadata_pool = QThreadPool(self)
+        self._metadata_pool.setMaxThreadCount(2)
+        self._metadata_events: dict[str, Event] = {}
+        self._metadata_tasks: dict[str, MetadataLoadTask] = {}
+        self._metadata_closed = False
         self._row_widgets: dict[str, QueueItemWidget] = {}
         self._output_folder_is_automatic = True
         self._thread: QThread | None = None
@@ -237,6 +259,7 @@ class MainWindow(QMainWindow):
 
         for item in result.added:
             self._add_queue_row(item)
+            self._start_metadata_load(item)
 
         if queue_was_empty and result.added and self._output_folder_is_automatic:
             self._output_folder.setText(str(result.added[0].source_path.parent))
@@ -262,10 +285,109 @@ class MainWindow(QMainWindow):
         row.output_format_changed.connect(self._set_item_output_format)
         row.remove_requested.connect(self._remove_item)
         row.retry_requested.connect(self._retry_item)
+        row.metadata_requested.connect(self._open_metadata)
         row.open_file_requested.connect(self._open_result_file)
         row.open_folder_requested.connect(self._open_result_folder)
         self._row_widgets[item.item_id] = row
         self._queue_layout.addWidget(row)
+
+    def _start_metadata_load(self, item: QueueItem) -> None:
+        if not self._metadata_service.available:
+            item.metadata_status = MetadataStatus.UNAVAILABLE
+            item.metadata_error = "Calibre's ebook-meta tool was not found."
+            self._sync_row(item.item_id)
+            return
+        item.metadata_status = MetadataStatus.LOADING
+        item.metadata_error = ""
+        cancel_event = Event()
+        task = MetadataLoadTask(
+            self._metadata_service,
+            item.item_id,
+            item.source_path,
+            cancel_event,
+        )
+        task.signals.loaded.connect(self._metadata_loaded)
+        task.signals.failed.connect(self._metadata_failed)
+        task.signals.finished.connect(self._metadata_task_finished)
+        self._metadata_events[item.item_id] = cancel_event
+        self._metadata_tasks[item.item_id] = task
+        self._sync_row(item.item_id)
+        self._metadata_pool.start(task)
+
+    @Slot(str, object)
+    def _metadata_loaded(self, item_id: str, result: MetadataLoadResult) -> None:
+        item = self._queue.get(item_id)
+        event = self._metadata_events.get(item_id)
+        if item is None or (event is not None and event.is_set()):
+            return
+        item.original_metadata = result.metadata
+        item.metadata_status = MetadataStatus.LOADED
+        item.metadata_error = ""
+        self._sync_row(item_id)
+
+    @Slot(str, str)
+    def _metadata_failed(self, item_id: str, message: str) -> None:
+        item = self._queue.get(item_id)
+        event = self._metadata_events.get(item_id)
+        if item is None or (event is not None and event.is_set()):
+            return
+        item.metadata_status = MetadataStatus.UNAVAILABLE
+        item.metadata_error = message
+        self._sync_row(item_id)
+
+    @Slot(str)
+    def _metadata_task_finished(self, item_id: str) -> None:
+        self._metadata_events.pop(item_id, None)
+        self._metadata_tasks.pop(item_id, None)
+
+    def _cancel_metadata_item(self, item_id: str) -> None:
+        cancel_event = self._metadata_events.get(item_id)
+        if cancel_event is not None:
+            cancel_event.set()
+        self._metadata_service.cleanup_item(item_id)
+
+    def _shutdown_metadata(self) -> None:
+        if self._metadata_closed:
+            return
+        self._metadata_closed = True
+        for cancel_event in self._metadata_events.values():
+            cancel_event.set()
+        self._metadata_pool.clear()
+        self._metadata_pool.waitForDone()
+        self._metadata_events.clear()
+        self._metadata_tasks.clear()
+        self._metadata_service.close()
+
+    @Slot(str)
+    def _open_metadata(self, item_id: str) -> None:
+        if self._batch_active:
+            return
+        item = self._queue.get(item_id)
+        if item is None or item.metadata_status is MetadataStatus.LOADING:
+            return
+        original = item.original_metadata or BookMetadata()
+        current = item.effective_metadata
+        dialog = MetadataDialog(item.source_path.name, original, current, self)
+        if dialog.exec() != MetadataDialog.DialogCode.Accepted:
+            return
+        edited = dialog.saved_metadata
+        if edited is None:
+            return
+
+        if edited.cover_path == original.cover_path:
+            self._metadata_service.clear_replacement_cover(item_id)
+        elif edited.cover_path is not None and edited.cover_path != current.cover_path:
+            try:
+                stored_cover = self._metadata_service.store_replacement_cover(
+                    item_id, edited.cover_path
+                )
+            except MetadataError as exc:
+                self._show_warning(str(exc))
+                return
+            edited = replace(edited, cover_path=stored_cover)
+
+        item.metadata_overrides = MetadataOverrides.between(original, edited)
+        self._sync_row(item_id)
 
     @Slot(str, str)
     def _set_item_output_format(self, item_id: str, output_format: str) -> None:
@@ -308,6 +430,7 @@ class MainWindow(QMainWindow):
     def _remove_item(self, item_id: str) -> None:
         if self._batch_active or not self._queue.remove(item_id):
             return
+        self._cancel_metadata_item(item_id)
         row = self._row_widgets.pop(item_id, None)
         if row is not None:
             self._queue_layout.removeWidget(row)
@@ -321,6 +444,7 @@ class MainWindow(QMainWindow):
         if self._batch_active:
             return
         for item_id in self._queue.clear_non_running():
+            self._cancel_metadata_item(item_id)
             row = self._row_widgets.pop(item_id, None)
             if row is not None:
                 self._queue_layout.removeWidget(row)
@@ -701,4 +825,5 @@ class MainWindow(QMainWindow):
                 self._cancel_batch()
             event.ignore()
             return
+        self._shutdown_metadata()
         super().closeEvent(event)

@@ -11,11 +11,15 @@ from bookforge.core.converter import (
     ConversionError,
     ConverterService,
 )
+from bookforge.core.metadata import BookMetadata, MetadataOverrides
 
 
 class WritingCalibreAdapter:
     is_available = True
     executable = Path(__file__)
+
+    def __init__(self) -> None:
+        self.arguments: tuple[str, ...] = ()
 
     def run(
         self,
@@ -24,7 +28,9 @@ class WritingCalibreAdapter:
         *,
         cancel_event=None,
         on_output=None,
+        arguments=(),
     ) -> CalibreRunResult:
+        self.arguments = tuple(arguments)
         if on_output is not None:
             on_output("50% writing\n")
         output_path.write_bytes(input_path.read_bytes())
@@ -39,7 +45,8 @@ class CancellingCalibreAdapter(WritingCalibreAdapter):
 
 class ConverterServiceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.converter = ConverterService(WritingCalibreAdapter())  # type: ignore[arg-type]
+        self.adapter = WritingCalibreAdapter()
+        self.converter = ConverterService(self.adapter)  # type: ignore[arg-type]
 
     def test_same_format_uses_converted_suffix(self) -> None:
         source = Path("Dune.epub")
@@ -72,6 +79,46 @@ class ConverterServiceTests(unittest.TestCase):
             self.assertEqual(raised.exception.log, "partial log")
             self.assertFalse((root / "Book.epub").exists())
             self.assertFalse(list(root.glob("*.bookforge-*")))
+
+    def test_metadata_arguments_are_passed_without_modifying_source(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "Исходник.txt"
+            original_bytes = "Исходный текст".encode("utf-8")
+            source.write_bytes(original_bytes)
+            cover = root / "cover.png"
+            cover.write_bytes(b"cover")
+            original = BookMetadata(title="Old", authors=("Old Author",))
+            edited = BookMetadata(
+                title="Книга",
+                authors=("Анна", "Борис"),
+                language="ru",
+                publisher="Издатель",
+                series="Серия",
+                series_index=2.5,
+                tags=("тест", "классика"),
+                cover_path=cover,
+            )
+            overrides = MetadataOverrides.between(original, edited)
+
+            self.converter.convert(
+                source, root, "epub", metadata_overrides=overrides
+            )
+
+            self.assertEqual(source.read_bytes(), original_bytes)
+            self.assertEqual(
+                self.adapter.arguments,
+                (
+                    "--title=Книга",
+                    "--language=ru",
+                    "--publisher=Издатель",
+                    "--series=Серия",
+                    "--authors=Анна & Борис",
+                    "--series-index=2.5",
+                    "--tags=тест,классика",
+                    f"--cover={cover}",
+                ),
+            )
 
 
 if __name__ == "__main__":

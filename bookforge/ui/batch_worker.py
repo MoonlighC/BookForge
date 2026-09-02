@@ -119,6 +119,7 @@ class BatchConversionWorker(QObject):
                     overwrite=job.overwrite,
                     cancel_event=self._cancellation.current_event,
                     on_output=handle_output,
+                    metadata_overrides=job.metadata_overrides,
                 )
             except ConversionCancelled as exc:
                 cancelled_count += 1

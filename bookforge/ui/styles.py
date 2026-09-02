@@ -184,6 +184,14 @@ QLabel#dropFormats {
     font-weight: 600;
 }
 
+QLabel#coverPreview {
+    background: #eef2f7;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    color: #667085;
+    font-size: 13px;
+}
+
 QLabel#inputFormat {
     background: transparent;
     color: #667085;

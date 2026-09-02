@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from bookforge.core.converter import OUTPUT_FORMATS, get_input_format
+from bookforge.core.metadata import MetadataStatus
 from bookforge.core.queue import QueueItem, QueueStatus, format_file_size
 
 
@@ -22,6 +23,7 @@ class QueueItemWidget(QFrame):
     output_format_changed = Signal(str, str)
     remove_requested = Signal(str)
     retry_requested = Signal(str)
+    metadata_requested = Signal(str)
     open_file_requested = Signal(str)
     open_folder_requested = Signal(str)
 
@@ -62,6 +64,8 @@ class QueueItemWidget(QFrame):
         self._format_combo.currentIndexChanged.connect(self._format_changed)
         self._retry = QPushButton("Retry")
         self._retry.setObjectName("compactButton")
+        self._metadata = QPushButton("Metadata")
+        self._metadata.setObjectName("compactButton")
         self._details_button = QPushButton("Details")
         self._details_button.setObjectName("compactButton")
         self._open_file = QPushButton("Open file")
@@ -69,6 +73,7 @@ class QueueItemWidget(QFrame):
         self._open_folder = QPushButton("Open folder")
         self._open_folder.setObjectName("compactButton")
         self._retry.clicked.connect(self._request_retry)
+        self._metadata.clicked.connect(self._request_metadata)
         self._details_button.clicked.connect(self._toggle_details)
         self._open_file.clicked.connect(self._request_open_file)
         self._open_folder.clicked.connect(self._request_open_folder)
@@ -77,6 +82,7 @@ class QueueItemWidget(QFrame):
         details_row.addWidget(self._format_combo)
         details_row.addStretch(1)
         details_row.addWidget(self._retry)
+        details_row.addWidget(self._metadata)
         details_row.addWidget(self._details_button)
         details_row.addWidget(self._open_file)
         details_row.addWidget(self._open_folder)
@@ -148,6 +154,18 @@ class QueueItemWidget(QFrame):
         )
         self._retry.setVisible(retryable)
         self._retry.setEnabled(retryable and not batch_locked)
+        metadata_text = "Metadata"
+        if item.metadata_overrides.is_edited:
+            metadata_text = "Metadata · Edited"
+        elif item.metadata_status is MetadataStatus.LOADING:
+            metadata_text = "Metadata · Loading…"
+        elif item.metadata_status is MetadataStatus.UNAVAILABLE:
+            metadata_text = "Metadata · Unavailable"
+        self._metadata.setText(metadata_text)
+        self._metadata.setToolTip(item.metadata_error)
+        self._metadata.setEnabled(
+            not batch_locked and item.metadata_status is not MetadataStatus.LOADING
+        )
         self._open_file.setVisible(completed)
         self._open_folder.setVisible(completed)
 
@@ -184,6 +202,10 @@ class QueueItemWidget(QFrame):
     @Slot()
     def _request_retry(self) -> None:
         self.retry_requested.emit(self._item_id)
+
+    @Slot()
+    def _request_metadata(self) -> None:
+        self.metadata_requested.emit(self._item_id)
 
     @Slot()
     def _request_open_file(self) -> None:

@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 
 from bookforge.core.converter import ConversionError, ConverterService
+from bookforge.core.metadata import MetadataOverrides
 from bookforge.core.queue import QueueItem, QueueStatus, path_key
 
 
@@ -29,6 +30,7 @@ class BatchJob:
     source_path: Path
     output_format: str
     overwrite: bool = False
+    metadata_overrides: MetadataOverrides = MetadataOverrides()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +62,10 @@ def preflight_batch(
     for item in items:
         try:
             output_path = converter.preflight(
-                item.source_path, output_folder, item.output_format
+                item.source_path,
+                output_folder,
+                item.output_format,
+                item.metadata_overrides,
             )
         except ConversionError as exc:
             issues.append(
@@ -137,6 +142,7 @@ def preflight_batch(
                 item.source_path,
                 item.output_format,
                 overwrite,
+                item.metadata_overrides,
             )
         )
 

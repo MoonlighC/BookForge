@@ -10,6 +10,7 @@ from bookforge.core.batch import (
     preflight_batch,
 )
 from bookforge.core.converter import ConverterService
+from bookforge.core.metadata import BookMetadata, MetadataOverrides
 from bookforge.core.queue import ConversionQueue, QueueStatus
 
 
@@ -39,6 +40,22 @@ class BatchPreflightTests(unittest.TestCase):
             )
             self.assertFalse(result.jobs)
             self.assertEqual(result.issues[0].status, QueueStatus.SKIPPED)
+
+    def test_job_keeps_its_items_metadata_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            item = self._queue_one(root)
+            item.metadata_overrides = MetadataOverrides.between(
+                BookMetadata(title="Original"), BookMetadata(title="Edited")
+            )
+
+            result = preflight_batch(
+                self.converter, (item,), root, OverwritePolicy.REPLACE_ALL
+            )
+
+            self.assertEqual(
+                result.jobs[0].metadata_overrides, item.metadata_overrides
+            )
 
     def test_replace_all_authorizes_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

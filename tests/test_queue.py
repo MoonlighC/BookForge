@@ -4,10 +4,46 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from bookforge.core.metadata import BookMetadata, MetadataOverrides
 from bookforge.core.queue import ConversionQueue, QueueStatus, format_file_size
 
 
 class ConversionQueueTests(unittest.TestCase):
+    def test_metadata_overrides_are_isolated_per_item(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first_source = root / "first.epub"
+            second_source = root / "second.epub"
+            first_source.write_bytes(b"first")
+            second_source.write_bytes(b"second")
+            queue = ConversionQueue()
+            first, second = queue.add_paths([first_source, second_source]).added
+            first.original_metadata = BookMetadata(title="First")
+            second.original_metadata = BookMetadata(title="Second")
+            first.metadata_overrides = MetadataOverrides.between(
+                first.original_metadata, BookMetadata(title="Edited first")
+            )
+
+            self.assertEqual(first.effective_metadata.title, "Edited first")
+            self.assertEqual(second.effective_metadata.title, "Second")
+            self.assertFalse(second.metadata_overrides.is_edited)
+
+    def test_metadata_overrides_survive_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "book.epub"
+            source.write_bytes(b"book")
+            queue = ConversionQueue()
+            item = queue.add_paths([source]).added[0]
+            item.metadata_overrides = MetadataOverrides.between(
+                BookMetadata(title="Original title"),
+                BookMetadata(title="Edited title"),
+            )
+            item.status = QueueStatus.FAILED
+
+            self.assertTrue(queue.retry(item.item_id))
+            self.assertEqual(item.effective_metadata.title, "Edited title")
+            self.assertTrue(item.metadata_overrides.is_edited)
+
     def test_adds_mixed_formats_and_uses_predictable_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

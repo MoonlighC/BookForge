@@ -2,7 +2,7 @@
 
 ## Overview
 
-BookForge is a local desktop application for converting e-books and documents between common formats. It uses Calibre's `ebook-convert` command-line tool to produce the selected output format.
+BookForge is a local desktop application for converting e-books and documents between common formats. It uses Calibre's `ebook-convert` command-line tool for conversion and `ebook-meta` for metadata and cover extraction.
 
 The application is built with Python and PySide6 and is currently developed primarily for Windows 10 and Windows 11.
 
@@ -12,6 +12,10 @@ The application is built with Python and PySide6 and is currently developed prim
 - Mix input formats in one in-memory conversion queue.
 - Choose AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT separately for every queued book.
 - Apply one output format to the whole queue, then adjust individual rows as needed.
+- Inspect and edit each book's title, authors, language, publisher, series, series index, and tags before conversion.
+- Preview an extracted cover or choose a validated JPG, JPEG, or PNG replacement for the converted output.
+- Keep metadata and cover edits per book, with a subtle **Metadata · Edited** indicator and Reset support.
+- Load metadata asynchronously with at most two extraction tasks at once; extraction failures do not block conversion.
 - Process the queue sequentially in one worker thread so the interface remains responsive and Calibre processes do not run concurrently.
 - Use one shared output directory, initially set from the first queued book.
 - Track Ready, Waiting, Converting, Completed, Failed, Cancelled, and Skipped states independently for every item.
@@ -30,7 +34,7 @@ The application is built with Python and PySide6 and is currently developed prim
 
 - Windows 10 or Windows 11
 - Python 3.12 or later
-- [Calibre](https://calibre-ebook.com/) installed separately, with `ebook-convert` available
+- [Calibre](https://calibre-ebook.com/) installed separately, with `ebook-convert` and `ebook-meta` available
 - PySide6 Essentials, installed from `requirements.txt`
 
 ## Installation
@@ -91,23 +95,25 @@ When using the shorter environment path shown above:
 
 ## Calibre dependency
 
-BookForge delegates conversion to Calibre rather than implementing an e-book conversion engine:
+BookForge delegates conversion and metadata extraction to Calibre rather than implementing e-book parsers and a conversion engine:
 
 ```text
 BookForge
     ↓
-Calibre ebook-convert
+Calibre ebook-meta / ebook-convert
     ↓
 converted e-book
 ```
 
-The current development version requires Calibre to be installed separately. Calibre is not bundled with BookForge. At startup, BookForge automatically looks for `ebook-convert` in `PATH` and in common Calibre installation locations on Windows. If it is not found, the application still opens and displays a clear warning, but conversion cannot begin.
+The current development version requires Calibre to be installed separately. Calibre is not bundled with BookForge. At startup, BookForge automatically looks for `ebook-convert` and `ebook-meta` in `PATH` and in common Calibre installation locations on Windows. If `ebook-convert` is missing, the application still opens and displays a clear warning, but conversion cannot begin. If only `ebook-meta` is missing or metadata extraction fails for one file, that queue item remains convertible and its Metadata action reports that metadata is unavailable.
 
 After installing Calibre, restart PowerShell and verify the command with:
 
 ```powershell
 Get-Command ebook-convert
 ebook-convert --version
+Get-Command ebook-meta
+ebook-meta --version
 ```
 
 Calibre is open-source software distributed under GPLv3. Packaging and distribution of the conversion engine will be addressed in a later release phase.
@@ -116,19 +122,28 @@ Calibre is open-source software distributed under GPLv3. Packaging and distribut
 
 1. Drop one or more supported books or documents onto the drop area, or click the drop area and select several files.
 2. Choose an output format in each row. AZW3 is the default, except AZW3 sources default to EPUB to avoid a same-format conversion.
-3. Optionally choose a format under **Set every book to** and click **Apply**. Individual rows remain editable afterward.
-4. Select the shared output folder if necessary. The first book's source folder is used by default.
-5. Choose **Ask**, **Replace all**, or **Skip all** for existing output files.
-6. Click **Convert all**. BookForge converts the ready items one at a time and continues after individual failures.
-7. During conversion, use **Cancel current** to stop only the active book or **Cancel batch** to stop it and cancel every waiting book.
-8. Expand **Details** to inspect bounded Calibre output. Use **Retry** or **Retry failed** to return unsuccessful items to Ready.
-9. Use **Open file** or **Open folder** on any completed row.
+3. Wait for the row's **Metadata · Loading…** action to become available, then optionally open it to preview the cover and edit metadata. Separate multiple authors with semicolons and tags with commas. **Save** stores changes for that queue item, **Cancel** discards that dialog session, and **Reset** restores the values and cover extracted from the source.
+4. Optionally choose a format under **Set every book to** and click **Apply**. Individual rows remain editable afterward.
+5. Select the shared output folder if necessary. The first book's source folder is used by default.
+6. Choose **Ask**, **Replace all**, or **Skip all** for existing output files.
+7. Click **Convert all**. BookForge converts the ready items one at a time and continues after individual failures.
+8. During conversion, use **Cancel current** to stop only the active book or **Cancel batch** to stop it and cancel every waiting book.
+9. Expand **Details** to inspect bounded Calibre output. Use **Retry** or **Retry failed** to return unsuccessful items to Ready. Metadata overrides survive retry.
+10. Use **Open file** or **Open folder** on any completed row.
 
 **Ask** prompts for each existing output and offers Replace, Skip, or Cancel batch. **Replace all** replaces existing outputs without further prompts, but never bypasses source-path or internal queue-collision protection. **Skip all** marks items whose outputs already exist as Skipped without starting Calibre.
 
 Progress percentages are shown only when Calibre emits a recognizable integer value from 0% through 100%. Some conversions do not expose usable percentage output; those remain indeterminate rather than displaying estimated progress.
 
 For example, converting `Dune.fb2` to AZW3 creates `Dune.azw3`, while converting `Dune.fb2` to FB2 uses the safe name `Dune_converted.fb2`. Same-format conversions never target the source path directly.
+
+## Metadata and covers
+
+When a book enters the queue, BookForge runs Calibre's `ebook-meta` asynchronously and reads its OPF metadata output. Supported editable fields are title, multiple authors, language, publisher, series, numeric series index, and multiple tags. Fields Calibre does not provide remain empty. Calibre may infer defaults for metadata-poor formats—for example, a TXT filename can become its title—and can normalize values such as language codes.
+
+The metadata dialog shows the extracted cover at its original aspect ratio, or a neutral **No cover** placeholder. A replacement must be a readable JPG, JPEG, or PNG. BookForge copies accepted replacements into an isolated temporary folder for that queue item; it never edits the selected image or embeds it into the source book. Per-item cover files are removed when that item is removed, when the queue is cleared, or when BookForge exits.
+
+Edits are held only in the in-memory queue and passed as verified `ebook-convert` options when the output is built. The original source path is always used as read-only conversion input, and conversion continues to use a temporary sibling output before atomically publishing the completed file. Metadata changes therefore affect only converted output files. Reset and Save remove an item's overrides when all values match the extracted original.
 
 ## Supported formats
 
@@ -164,9 +179,9 @@ BookForge does not artificially restrict input/output combinations. The practica
 
 ## Development status
 
-BookForge 0.5.0 is currently at Phase 5. Batch and current-item cancellation, streamed Calibre output, defensive progress parsing, bounded per-item logs, retry actions, three overwrite policies, expanded preflight validation, and safe close-during-conversion handling are implemented.
+BookForge 0.6.0 is currently at Phase 6. Per-book asynchronous metadata and cover extraction, a compact metadata action and native editor dialog, validated cover replacement, in-memory overrides, conversion integration, and metadata resource cleanup are implemented. Phase 5 batch cancellation, real progress, logs, retry, overwrite policies, and transactional output behavior remain in place.
 
-A real sequential batch has been verified on Windows with a separately installed copy of Calibre, including generated TXT → EPUB and TXT → PDF fixtures with spaces and Cyrillic characters in their paths. Completed rows retain **Open file** and **Open folder** actions.
+A real sequential batch has been verified on Windows with a separately installed copy of Calibre, including generated TXT → EPUB and TXT → PDF fixtures with spaces and Cyrillic characters in their paths. A generated TXT → EPUB metadata smoke test also verified an overridden title, author, generated PNG cover, and byte-for-byte source preservation. Completed rows retain **Open file** and **Open folder** actions.
 
 The other listed formats and input/output combinations are supported by the current interface and conversion pipeline, but they have not all been manually verified with real books yet.
 
@@ -178,7 +193,10 @@ The other listed formats and input/output combinations are supported by the curr
 - The queue is in memory only and is not restored after restarting BookForge.
 - Conversions run sequentially; parallel conversion is intentionally not implemented.
 - Advanced Calibre conversion options are not exposed in the interface.
-- There is no metadata editor, cover preview, conversion history, or packaged executable.
+- Metadata extraction and output behavior depend on what Calibre supports for each input/output format. Metadata-poor formats can receive Calibre-inferred defaults, and Calibre may normalize values such as language codes.
+- BookForge passes changed, non-empty metadata through Calibre's supported conversion options. Reliably clearing an existing field to an empty value is not supported in this phase and Calibre may retain the source value.
+- Replacing a cover is supported; explicitly removing an existing cover is not exposed because it cannot be applied consistently across the supported formats.
+- There is no conversion history or packaged executable.
 - Calibre must be installed separately.
 
 ## DRM

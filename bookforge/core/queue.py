@@ -9,6 +9,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from bookforge.core.converter import ConversionError, get_input_format, get_output_format
+from bookforge.core.metadata import (
+    BookMetadata,
+    MetadataOverrides,
+    MetadataStatus,
+    effective_metadata,
+)
 
 
 class QueueStatus(str, Enum):
@@ -31,7 +37,15 @@ class QueueItem:
     error_message: str = ""
     progress: int | None = None
     log: str = ""
+    original_metadata: BookMetadata | None = None
+    metadata_overrides: MetadataOverrides = field(default_factory=MetadataOverrides)
+    metadata_status: MetadataStatus = MetadataStatus.NOT_LOADED
+    metadata_error: str = ""
     item_id: str = field(default_factory=lambda: uuid4().hex)
+
+    @property
+    def effective_metadata(self) -> BookMetadata:
+        return effective_metadata(self.original_metadata, self.metadata_overrides)
 
 
 @dataclass(frozen=True, slots=True)

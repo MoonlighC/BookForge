@@ -15,6 +15,7 @@ from bookforge.core.calibre import (
     CalibreNotFoundError,
     CalibreProcessError,
 )
+from bookforge.core.metadata import MetadataOverrides, metadata_conversion_arguments
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +92,11 @@ class ConverterService:
         return output_path
 
     def preflight(
-        self, input_path: Path, output_folder: Path, output_format: str
+        self,
+        input_path: Path,
+        output_folder: Path,
+        output_format: str,
+        metadata_overrides: MetadataOverrides | None = None,
     ) -> Path:
         """Validate one request without starting Calibre."""
         source = input_path.expanduser().resolve()
@@ -101,6 +106,7 @@ class ConverterService:
         output_path = self.output_path_for(source, destination_folder, output_format)
         if _paths_are_same(source, output_path):
             raise ConversionError("Input and output paths cannot be identical.")
+        self._validate_metadata_overrides(metadata_overrides)
         return output_path
 
     def convert(
@@ -112,10 +118,13 @@ class ConverterService:
         overwrite: bool = False,
         cancel_event: Event | None = None,
         on_output: Callable[[str], None] | None = None,
+        metadata_overrides: MetadataOverrides | None = None,
     ) -> ConversionResult:
         source = input_path.expanduser().resolve()
         destination_folder = output_folder.expanduser().resolve()
-        output_path = self.preflight(source, destination_folder, output_format)
+        output_path = self.preflight(
+            source, destination_folder, output_format, metadata_overrides
+        )
         if output_path.exists() and not overwrite:
             raise ConversionError(
                 "The output file already exists and was not replaced."
@@ -131,6 +140,11 @@ class ConverterService:
                 temporary_path,
                 cancel_event=cancel_event,
                 on_output=on_output,
+                arguments=tuple(
+                    metadata_conversion_arguments(
+                        metadata_overrides or MetadataOverrides()
+                    )
+                ),
             )
         except CalibreNotFoundError as exc:
             raise ConversionError(
@@ -191,6 +205,21 @@ class ConverterService:
             raise ConversionError("The selected output path is not a folder.")
         if not os.access(output_folder, os.W_OK):
             raise ConversionError("The selected output folder is not writable.")
+
+    @staticmethod
+    def _validate_metadata_overrides(
+        metadata_overrides: MetadataOverrides | None,
+    ) -> None:
+        if (
+            metadata_overrides is None
+            or not metadata_overrides.is_edited
+            or metadata_overrides.metadata is None
+            or "cover_path" not in metadata_overrides.changed_fields
+            or metadata_overrides.metadata.cover_path is None
+        ):
+            return
+        if not metadata_overrides.metadata.cover_path.is_file():
+            raise ConversionError("The selected replacement cover is unavailable.")
 
 
 def _last_useful_line(output: str) -> str:

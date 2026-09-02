@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import sys
+import tempfile
 from threading import Event, Thread
 import time
 import unittest
+from unittest.mock import patch
 
 from bookforge.core.calibre import (
     BoundedLog,
     CalibreAdapter,
     CalibreCancelledError,
+    find_ebook_convert,
+    find_ebook_meta,
     parse_calibre_progress,
 )
 
@@ -24,6 +29,25 @@ class PythonChildAdapter(CalibreAdapter):
 
 
 class CalibreProcessTests(unittest.TestCase):
+    def test_shared_discovery_finds_both_calibre_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            calibre_folder = Path(folder) / "Calibre2"
+            calibre_folder.mkdir()
+            convert = calibre_folder / "ebook-convert.exe"
+            metadata = calibre_folder / "ebook-meta.exe"
+            convert.write_bytes(b"")
+            metadata.write_bytes(b"")
+            environment = {
+                "ProgramFiles": folder,
+                "ProgramFiles(x86)": "",
+                "LOCALAPPDATA": "",
+            }
+            with patch.dict(os.environ, environment), patch(
+                "bookforge.core.calibre.shutil.which", return_value=None
+            ):
+                self.assertEqual(find_ebook_convert(), convert.resolve())
+                self.assertEqual(find_ebook_meta(), metadata.resolve())
+
     def test_progress_parser_accepts_only_valid_percentages(self) -> None:
         self.assertEqual(parse_calibre_progress("Converting input 42%\n"), 42)
         self.assertEqual(parse_calibre_progress("0% then 100%"), 100)
