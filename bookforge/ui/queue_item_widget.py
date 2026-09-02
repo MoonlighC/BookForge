@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
 )
@@ -19,12 +21,14 @@ from bookforge.core.queue import QueueItem, QueueStatus, format_file_size
 class QueueItemWidget(QFrame):
     output_format_changed = Signal(str, str)
     remove_requested = Signal(str)
+    retry_requested = Signal(str)
     open_file_requested = Signal(str)
     open_folder_requested = Signal(str)
 
     def __init__(self, item: QueueItem) -> None:
         super().__init__()
         self._item_id = item.item_id
+        self._details_expanded = False
         self.setObjectName("queueItem")
 
         root = QVBoxLayout(self)
@@ -56,26 +60,47 @@ class QueueItemWidget(QFrame):
         for output_format in OUTPUT_FORMATS:
             self._format_combo.addItem(output_format.label, output_format.extension)
         self._format_combo.currentIndexChanged.connect(self._format_changed)
+        self._retry = QPushButton("Retry")
+        self._retry.setObjectName("compactButton")
+        self._details_button = QPushButton("Details")
+        self._details_button.setObjectName("compactButton")
         self._open_file = QPushButton("Open file")
         self._open_file.setObjectName("compactButton")
         self._open_folder = QPushButton("Open folder")
         self._open_folder.setObjectName("compactButton")
+        self._retry.clicked.connect(self._request_retry)
+        self._details_button.clicked.connect(self._toggle_details)
         self._open_file.clicked.connect(self._request_open_file)
         self._open_folder.clicked.connect(self._request_open_folder)
         details_row.addWidget(self._source_details)
         details_row.addWidget(arrow)
         details_row.addWidget(self._format_combo)
         details_row.addStretch(1)
+        details_row.addWidget(self._retry)
+        details_row.addWidget(self._details_button)
         details_row.addWidget(self._open_file)
         details_row.addWidget(self._open_folder)
+
+        self._item_progress = QProgressBar()
+        self._item_progress.setObjectName("itemProgress")
+        self._item_progress.setTextVisible(True)
 
         self._error = QLabel()
         self._error.setObjectName("queueError")
         self._error.setWordWrap(True)
 
+        self._log_view = QPlainTextEdit()
+        self._log_view.setObjectName("logView")
+        self._log_view.setReadOnly(True)
+        self._log_view.setMaximumBlockCount(1000)
+        self._log_view.setMaximumHeight(130)
+        self._log_view.hide()
+
         root.addLayout(title_row)
         root.addLayout(details_row)
+        root.addWidget(self._item_progress)
         root.addWidget(self._error)
+        root.addWidget(self._log_view)
         self.update_item(item)
 
     def update_item(self, item: QueueItem, *, batch_locked: bool = False) -> None:
@@ -93,7 +118,10 @@ class QueueItemWidget(QFrame):
         self._format_combo.setCurrentIndex(index)
         self._format_combo.blockSignals(False)
 
-        self._status.setText(item.status.value)
+        status_text = item.status.value
+        if item.status is QueueStatus.CONVERTING and item.progress is not None:
+            status_text = f"Converting · {item.progress}%"
+        self._status.setText(status_text)
         self._status.setProperty("queueState", item.status.value.lower())
         self._status.setToolTip(item.error_message)
         self._status.style().unpolish(self._status)
@@ -103,13 +131,36 @@ class QueueItemWidget(QFrame):
         self._format_combo.setDisabled(batch_locked or is_running)
         self._remove_button.setDisabled(batch_locked or is_running)
 
+        self._item_progress.setVisible(is_running)
+        if is_running and item.progress is not None:
+            self._item_progress.setRange(0, 100)
+            self._item_progress.setValue(item.progress)
+            self._item_progress.setFormat("%p%")
+        elif is_running:
+            self._item_progress.setRange(0, 0)
+            self._item_progress.setFormat("")
+
         completed = item.status is QueueStatus.COMPLETED
+        retryable = item.status in (
+            QueueStatus.FAILED,
+            QueueStatus.CANCELLED,
+            QueueStatus.SKIPPED,
+        )
+        self._retry.setVisible(retryable)
+        self._retry.setEnabled(retryable and not batch_locked)
         self._open_file.setVisible(completed)
         self._open_folder.setVisible(completed)
+
         self._error.setText(item.error_message)
         self._error.setToolTip(item.error_message)
-        self._error.setVisible(
-            item.status is QueueStatus.FAILED and bool(item.error_message)
+        self._error.setVisible(retryable and bool(item.error_message))
+
+        detail_text = item.log or item.error_message or "No Calibre output captured."
+        if self._log_view.toPlainText() != detail_text:
+            self._log_view.setPlainText(detail_text)
+        self._log_view.setVisible(self._details_expanded)
+        self._details_button.setText(
+            "Hide details" if self._details_expanded else "Details"
         )
 
     @Slot(int)
@@ -119,8 +170,20 @@ class QueueItemWidget(QFrame):
             self.output_format_changed.emit(self._item_id, str(output_format))
 
     @Slot()
+    def _toggle_details(self) -> None:
+        self._details_expanded = not self._details_expanded
+        self._log_view.setVisible(self._details_expanded)
+        self._details_button.setText(
+            "Hide details" if self._details_expanded else "Details"
+        )
+
+    @Slot()
     def _request_remove(self) -> None:
         self.remove_requested.emit(self._item_id)
+
+    @Slot()
+    def _request_retry(self) -> None:
+        self.retry_requested.emit(self._item_id)
 
     @Slot()
     def _request_open_file(self) -> None:

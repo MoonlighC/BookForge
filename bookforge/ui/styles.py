@@ -142,6 +142,16 @@ QLabel#queueStatus[queueState="failed"] {
     color: #b42318;
 }
 
+QLabel#queueStatus[queueState="cancelled"] {
+    background: #f2f4f7;
+    color: #475467;
+}
+
+QLabel#queueStatus[queueState="skipped"] {
+    background: #fff5d9;
+    color: #815b00;
+}
+
 QLabel#queueError {
     background: transparent;
     color: #b42318;
@@ -265,6 +275,26 @@ QPushButton#compactButton {
     font-size: 12px;
 }
 
+QPushButton#cancelButton {
+    border-color: #f0b64d;
+    color: #815b00;
+}
+
+QPushButton#cancelButton:hover {
+    background: #fff8e7;
+    border-color: #d79b2c;
+}
+
+QPushButton#dangerButton {
+    border-color: #e5a4a0;
+    color: #b42318;
+}
+
+QPushButton#dangerButton:hover {
+    background: #fff0ef;
+    border-color: #d46b63;
+}
+
 QProgressBar {
     min-height: 6px;
     max-height: 6px;
@@ -277,6 +307,36 @@ QProgressBar {
 QProgressBar::chunk {
     background: #4f7ee8;
     border-radius: 3px;
+}
+
+QProgressBar#itemProgress {
+    min-height: 18px;
+    max-height: 18px;
+    background: #e9edf3;
+    border-radius: 5px;
+    color: #344054;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QProgressBar#itemProgress::chunk {
+    background: #5a80d8;
+    border-radius: 5px;
+}
+
+QProgressBar#batchProgress {
+    min-height: 8px;
+    max-height: 8px;
+}
+
+QPlainTextEdit#logView {
+    background: #f8fafc;
+    border: 1px solid #e1e6ed;
+    border-radius: 7px;
+    color: #344054;
+    font-family: Consolas, "Courier New";
+    font-size: 11px;
+    padding: 7px;
 }
 
 QLabel#statusLabel {

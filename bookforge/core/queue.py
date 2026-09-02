@@ -17,6 +17,8 @@ class QueueStatus(str, Enum):
     CONVERTING = "Converting"
     COMPLETED = "Completed"
     FAILED = "Failed"
+    CANCELLED = "Cancelled"
+    SKIPPED = "Skipped"
 
 
 @dataclass(slots=True)
@@ -27,6 +29,8 @@ class QueueItem:
     status: QueueStatus = QueueStatus.READY
     result_path: Path | None = None
     error_message: str = ""
+    progress: int | None = None
+    log: str = ""
     item_id: str = field(default_factory=lambda: uuid4().hex)
 
 
@@ -116,7 +120,40 @@ class ConversionQueue:
         item.status = QueueStatus.READY
         item.result_path = None
         item.error_message = ""
+        item.progress = None
+        item.log = ""
         return True
+
+    def retry(self, item_id: str) -> bool:
+        item = self.get(item_id)
+        if item is None or item.status not in (
+            QueueStatus.FAILED,
+            QueueStatus.CANCELLED,
+            QueueStatus.SKIPPED,
+        ):
+            return False
+        self._reset_item(item)
+        return True
+
+    def retry_failed(self) -> tuple[str, ...]:
+        retried: list[str] = []
+        for item in self._items:
+            if item.status in (
+                QueueStatus.FAILED,
+                QueueStatus.CANCELLED,
+                QueueStatus.SKIPPED,
+            ):
+                self._reset_item(item)
+                retried.append(item.item_id)
+        return tuple(retried)
+
+    @staticmethod
+    def _reset_item(item: QueueItem) -> None:
+        item.status = QueueStatus.READY
+        item.result_path = None
+        item.error_message = ""
+        item.progress = None
+        item.log = ""
 
 
 def paths_are_same(first: Path, second: Path) -> bool:

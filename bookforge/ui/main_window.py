@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, QUrl, Slot
+from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Slot
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
@@ -24,6 +23,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from bookforge.core.batch import (
+    OverwriteDecision,
+    OverwritePolicy,
+    PreflightIssue,
+    preflight_batch,
+)
 from bookforge.core.converter import (
     INPUT_FORMATS,
     OUTPUT_FORMATS,
@@ -31,13 +36,21 @@ from bookforge.core.converter import (
     ConversionResult,
     ConverterService,
 )
-from bookforge.core.queue import ConversionQueue, QueueItem, QueueStatus, path_key
-from bookforge.ui.batch_worker import BatchConversionWorker, BatchJob
+from bookforge.core.queue import ConversionQueue, QueueItem, QueueStatus
+from bookforge.ui.batch_worker import (
+    BatchCancellation,
+    BatchConversionWorker,
+)
 from bookforge.ui.drop_area import DropArea
 from bookforge.ui.queue_item_widget import QueueItemWidget
 
 
 LOGGER = logging.getLogger(__name__)
+_RETRYABLE_STATUSES = (
+    QueueStatus.FAILED,
+    QueueStatus.CANCELLED,
+    QueueStatus.SKIPPED,
+)
 
 
 class MainWindow(QMainWindow):
@@ -49,11 +62,16 @@ class MainWindow(QMainWindow):
         self._output_folder_is_automatic = True
         self._thread: QThread | None = None
         self._worker: BatchConversionWorker | None = None
+        self._cancellation: BatchCancellation | None = None
         self._batch_active = False
+        self._batch_cancel_requested = False
+        self._closing_after_cancel = False
+        self._current_position = 0
+        self._current_total = 0
 
         self.setWindowTitle("BookForge")
-        self.resize(940, 820)
-        self.setMinimumSize(760, 680)
+        self.resize(960, 850)
+        self.setMinimumSize(780, 700)
         self._build_ui()
         self._show_calibre_state()
         self._update_queue_ui()
@@ -87,13 +105,13 @@ class MainWindow(QMainWindow):
         queue_header = QHBoxLayout()
         self._queue_heading = QLabel("Conversion queue")
         self._queue_heading.setObjectName("sectionTitle")
-        self._add_button = QPushButton("+ Add books")
+        self._retry_failed_button = QPushButton("Retry failed")
         self._clear_button = QPushButton("Clear queue")
-        self._add_button.clicked.connect(self._browse_input)
+        self._retry_failed_button.clicked.connect(self._retry_failed)
         self._clear_button.clicked.connect(self._clear_queue)
         queue_header.addWidget(self._queue_heading)
         queue_header.addStretch(1)
-        queue_header.addWidget(self._add_button)
+        queue_header.addWidget(self._retry_failed_button)
         queue_header.addWidget(self._clear_button)
         root.addLayout(queue_header)
 
@@ -129,13 +147,17 @@ class MainWindow(QMainWindow):
             self._set_all_combo.addItem(output_format.label, output_format.extension)
         self._apply_all_button = QPushButton("Apply")
         self._apply_all_button.clicked.connect(self._apply_format_to_all)
-        overwrite_note = QLabel("Existing files: ask before replacing")
-        overwrite_note.setObjectName("subtleNote")
+        overwrite_label = QLabel("Existing files")
+        overwrite_label.setObjectName("sectionLabel")
+        self._overwrite_combo = QComboBox()
+        for policy in OverwritePolicy:
+            self._overwrite_combo.addItem(policy.value, policy)
         formats_row.addWidget(formats_label)
         formats_row.addWidget(self._set_all_combo)
         formats_row.addWidget(self._apply_all_button)
         formats_row.addStretch(1)
-        formats_row.addWidget(overwrite_note)
+        formats_row.addWidget(overwrite_label)
+        formats_row.addWidget(self._overwrite_combo)
 
         folder_row = QHBoxLayout()
         folder_label = QLabel("Output folder")
@@ -154,18 +176,26 @@ class MainWindow(QMainWindow):
         root.addWidget(controls)
 
         self._progress = QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setTextVisible(False)
+        self._progress.setObjectName("batchProgress")
+        self._progress.setTextVisible(True)
         self._progress.hide()
         root.addWidget(self._progress)
 
         footer = QHBoxLayout()
         self._summary = QLabel("0 books • Ready")
         self._summary.setObjectName("statusLabel")
+        self._cancel_current_button = QPushButton("Cancel current")
+        self._cancel_current_button.setObjectName("cancelButton")
+        self._cancel_batch_button = QPushButton("Cancel batch")
+        self._cancel_batch_button.setObjectName("dangerButton")
         self._convert_button = QPushButton("Convert all")
         self._convert_button.setObjectName("primaryButton")
+        self._cancel_current_button.clicked.connect(self._cancel_current)
+        self._cancel_batch_button.clicked.connect(self._cancel_batch)
         self._convert_button.clicked.connect(self._start_conversion)
         footer.addWidget(self._summary, 1)
+        footer.addWidget(self._cancel_current_button)
+        footer.addWidget(self._cancel_batch_button)
         footer.addWidget(self._convert_button)
         root.addLayout(footer)
 
@@ -231,6 +261,7 @@ class MainWindow(QMainWindow):
         row = QueueItemWidget(item)
         row.output_format_changed.connect(self._set_item_output_format)
         row.remove_requested.connect(self._remove_item)
+        row.retry_requested.connect(self._retry_item)
         row.open_file_requested.connect(self._open_result_file)
         row.open_folder_requested.connect(self._open_result_folder)
         self._row_widgets[item.item_id] = row
@@ -257,6 +288,20 @@ class MainWindow(QMainWindow):
         for item in self._queue.items:
             self._queue.set_output_format(item.item_id, output_format)
             self._sync_row(item.item_id)
+        self._update_queue_ui()
+
+    @Slot(str)
+    def _retry_item(self, item_id: str) -> None:
+        if not self._batch_active and self._queue.retry(item_id):
+            self._sync_row(item_id)
+            self._update_queue_ui()
+
+    @Slot()
+    def _retry_failed(self) -> None:
+        if self._batch_active:
+            return
+        for item_id in self._queue.retry_failed():
+            self._sync_row(item_id)
         self._update_queue_ui()
 
     @Slot(str)
@@ -301,11 +346,9 @@ class MainWindow(QMainWindow):
     def _start_conversion(self) -> None:
         if self._batch_active or (self._thread is not None and self._thread.isRunning()):
             return
-        candidates = [
-            item
-            for item in self._queue.items
-            if item.status in (QueueStatus.READY, QueueStatus.FAILED)
-        ]
+        candidates = tuple(
+            item for item in self._queue.items if item.status is QueueStatus.READY
+        )
         if not candidates:
             self._show_warning("There are no ready books to convert.")
             return
@@ -318,91 +361,144 @@ class MainWindow(QMainWindow):
             self._show_warning("Select an output folder before converting.")
             return
 
-        output_folder = Path(self._output_folder.text()).expanduser()
-        if not output_folder.exists() or not output_folder.is_dir():
-            self._show_warning("The selected output folder is unavailable.")
-            return
-        if not os.access(output_folder, os.W_OK):
-            self._show_warning("The selected output folder is not writable.")
-            return
-
-        jobs: list[BatchJob] = []
-        claimed_outputs: set[str] = set()
         for item in candidates:
-            item.status = QueueStatus.READY
-            item.result_path = None
             item.error_message = ""
-            try:
-                output_path = self._converter.output_path_for(
-                    item.source_path, output_folder, item.output_format
-                )
-            except ConversionError as exc:
-                self._mark_failed(item, str(exc))
-                continue
+            item.log = ""
+            item.progress = None
+            item.result_path = None
 
-            output_key = path_key(output_path)
-            if output_key in claimed_outputs:
-                self._mark_failed(
-                    item,
-                    "Another queued book targets the same output filename.",
-                )
-                continue
+        output_folder = Path(self._output_folder.text()).expanduser()
+        policy = self._selected_overwrite_policy()
+        preflight = preflight_batch(
+            self._converter,
+            candidates,
+            output_folder,
+            policy,
+            self._ask_overwrite,
+        )
+        for issue in preflight.issues:
+            self._apply_preflight_issue(issue)
+        if preflight.batch_cancelled:
+            self._update_queue_ui()
+            return
 
-            overwrite = False
-            if output_path.exists():
-                overwrite = self._confirm_replace(output_path)
-                if not overwrite:
-                    self._mark_failed(
-                        item,
-                        "Skipped because the existing output file was not replaced.",
-                    )
-                    continue
-
-            claimed_outputs.add(output_key)
-            item.status = QueueStatus.WAITING
-            self._sync_row(item.item_id)
-            jobs.append(
-                BatchJob(
-                    item.item_id,
-                    item.source_path,
-                    item.output_format,
-                    overwrite,
-                )
-            )
-
-        if not jobs:
+        for job in preflight.jobs:
+            item = self._queue.get(job.item_id)
+            if item is not None:
+                item.status = QueueStatus.WAITING
+                self._sync_row(item.item_id)
+        if not preflight.jobs:
             self._update_queue_ui()
             return
 
         self._batch_active = True
+        self._batch_cancel_requested = False
+        self._current_position = 0
+        self._current_total = len(preflight.jobs)
+        self._progress.setRange(0, 0)
+        self._progress.setFormat("")
         self._progress.show()
         self._set_batch_locked(True)
-        self._summary.setText(f"Preparing {len(jobs)} book(s)")
+        self._summary.setText(f"Preparing {len(preflight.jobs)} book(s)")
 
         self._thread = QThread(self)
+        self._cancellation = BatchCancellation()
         self._worker = BatchConversionWorker(
-            self._converter, tuple(jobs), output_folder.resolve()
+            self._converter,
+            preflight.jobs,
+            output_folder.resolve(),
+            self._cancellation,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.item_started.connect(self._item_started)
+        self._worker.item_progress.connect(self._item_progress)
+        self._worker.item_log_updated.connect(self._item_log_updated)
         self._worker.item_completed.connect(self._item_completed)
         self._worker.item_failed.connect(self._item_failed)
+        self._worker.item_cancelled.connect(self._item_cancelled)
         self._worker.finished.connect(self._batch_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._thread_finished)
         self._thread.start()
 
+    def _apply_preflight_issue(self, issue: PreflightIssue) -> None:
+        item = self._queue.get(issue.item_id)
+        if item is None:
+            return
+        item.status = issue.status
+        item.result_path = None
+        item.progress = None
+        item.error_message = issue.message
+        item.log = issue.message
+        self._sync_row(item.item_id)
+
+    def _selected_overwrite_policy(self) -> OverwritePolicy:
+        policy = self._overwrite_combo.currentData()
+        return policy if isinstance(policy, OverwritePolicy) else OverwritePolicy.ASK
+
+    def _ask_overwrite(self, output_path: Path) -> OverwriteDecision:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Output file exists")
+        dialog.setText(output_path.name)
+        dialog.setInformativeText(
+            "Choose whether to replace this output, skip the book, or stop the batch."
+        )
+        replace_button = dialog.addButton(
+            "Replace", QMessageBox.ButtonRole.AcceptRole
+        )
+        skip_button = dialog.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
+        cancel_button = dialog.addButton(
+            "Cancel batch", QMessageBox.ButtonRole.DestructiveRole
+        )
+        dialog.setDefaultButton(skip_button)
+        dialog.exec()
+        if dialog.clickedButton() is replace_button:
+            return OverwriteDecision.REPLACE
+        if dialog.clickedButton() is cancel_button:
+            return OverwriteDecision.CANCEL_BATCH
+        return OverwriteDecision.SKIP
+
     @Slot(str, int, int)
     def _item_started(self, item_id: str, position: int, total: int) -> None:
         item = self._queue.get(item_id)
         if item is None:
             return
+        self._current_position = position
+        self._current_total = total
         item.status = QueueStatus.CONVERTING
         item.error_message = ""
+        item.progress = None
+        item.log = ""
+        self._progress.setRange(0, 0)
+        self._progress.setFormat("")
+        self._cancel_current_button.setEnabled(not self._batch_cancel_requested)
         self._sync_row(item_id)
         self._summary.setText(f"Converting {position} of {total}")
+
+    @Slot(str, int)
+    def _item_progress(self, item_id: str, progress: int) -> None:
+        item = self._queue.get(item_id)
+        if item is None or item.status is not QueueStatus.CONVERTING:
+            return
+        item.progress = progress
+        self._progress.setRange(0, 100)
+        self._progress.setValue(progress)
+        self._progress.setFormat("Current book · %p%")
+        self._summary.setText(
+            f"Converting {self._current_position} of {self._current_total} · {progress}%"
+        )
+        self._sync_row(item_id)
+
+    @Slot(str, str)
+    def _item_log_updated(self, item_id: str, log: str) -> None:
+        item = self._queue.get(item_id)
+        if item is None:
+            return
+        item.log = log
+        self._sync_row(item_id)
 
     @Slot(str, object)
     def _item_completed(self, item_id: str, result: ConversionResult) -> None:
@@ -412,20 +508,58 @@ class MainWindow(QMainWindow):
         item.status = QueueStatus.COMPLETED
         item.result_path = result.output_path.resolve()
         item.error_message = ""
+        item.progress = None
+        item.log = result.log
         self._sync_row(item_id)
 
-    @Slot(str, str)
-    def _item_failed(self, item_id: str, message: str) -> None:
+    @Slot(str, str, str)
+    def _item_failed(self, item_id: str, message: str, log: str) -> None:
         item = self._queue.get(item_id)
         if item is not None:
-            self._mark_failed(item, message)
+            self._set_terminal_item(item, QueueStatus.FAILED, message, log)
 
-    @Slot(int, int)
-    def _batch_finished(self, _completed_count: int, _failed_count: int) -> None:
+    @Slot(str, str, str)
+    def _item_cancelled(self, item_id: str, message: str, log: str) -> None:
+        item = self._queue.get(item_id)
+        if item is not None:
+            self._set_terminal_item(item, QueueStatus.CANCELLED, message, log)
+
+    def _set_terminal_item(
+        self, item: QueueItem, status: QueueStatus, message: str, log: str
+    ) -> None:
+        item.status = status
+        item.result_path = None
+        item.progress = None
+        item.error_message = message
+        item.log = log or message
+        self._sync_row(item.item_id)
+
+    @Slot(int, int, int)
+    def _batch_finished(
+        self, _completed_count: int, _failed_count: int, _cancelled_count: int
+    ) -> None:
         self._batch_active = False
         self._progress.hide()
         self._set_batch_locked(False)
         self._update_queue_ui()
+
+    @Slot()
+    def _cancel_current(self) -> None:
+        if not self._batch_active or self._cancellation is None:
+            return
+        self._cancellation.cancel_current()
+        self._cancel_current_button.setDisabled(True)
+        self._summary.setText("Cancelling current conversion...")
+
+    @Slot()
+    def _cancel_batch(self) -> None:
+        if not self._batch_active or self._cancellation is None:
+            return
+        self._batch_cancel_requested = True
+        self._cancellation.cancel_batch()
+        self._cancel_current_button.setDisabled(True)
+        self._cancel_batch_button.setDisabled(True)
+        self._summary.setText("Cancelling batch...")
 
     @Slot()
     def _thread_finished(self) -> None:
@@ -433,12 +567,9 @@ class MainWindow(QMainWindow):
             self._thread.deleteLater()
         self._thread = None
         self._worker = None
-
-    def _mark_failed(self, item: QueueItem, message: str) -> None:
-        item.status = QueueStatus.FAILED
-        item.result_path = None
-        item.error_message = message
-        self._sync_row(item.item_id)
+        self._cancellation = None
+        if self._closing_after_cancel:
+            QTimer.singleShot(0, self.close)
 
     def _sync_row(self, item_id: str) -> None:
         item = self._queue.get(item_id)
@@ -448,12 +579,21 @@ class MainWindow(QMainWindow):
 
     def _set_batch_locked(self, locked: bool) -> None:
         self._drop_area.setDisabled(locked)
-        self._add_button.setDisabled(locked)
+        has_retryable = any(
+            item.status in _RETRYABLE_STATUSES for item in self._queue.items
+        )
+        self._retry_failed_button.setVisible(has_retryable)
+        self._retry_failed_button.setEnabled(has_retryable and not locked)
         self._clear_button.setDisabled(locked or len(self._queue) == 0)
         self._set_all_combo.setDisabled(locked or len(self._queue) == 0)
         self._apply_all_button.setDisabled(locked or len(self._queue) == 0)
+        self._overwrite_combo.setDisabled(locked or len(self._queue) == 0)
         self._browse_folder_button.setDisabled(locked)
         self._convert_button.setDisabled(locked)
+        self._cancel_current_button.setVisible(locked)
+        self._cancel_batch_button.setVisible(locked)
+        self._cancel_current_button.setEnabled(locked and not self._batch_cancel_requested)
+        self._cancel_batch_button.setEnabled(locked and not self._batch_cancel_requested)
         for item in self._queue.items:
             self._sync_row(item.item_id)
 
@@ -464,24 +604,28 @@ class MainWindow(QMainWindow):
         self._queue_scroll.setVisible(count > 0)
         self._drop_area.set_compact(count > 0)
 
-        has_pending = any(
-            item.status in (QueueStatus.READY, QueueStatus.FAILED)
-            for item in self._queue.items
+        has_ready = any(item.status is QueueStatus.READY for item in self._queue.items)
+        has_retryable = any(
+            item.status in _RETRYABLE_STATUSES for item in self._queue.items
         )
         can_convert = (
             count > 0
-            and has_pending
+            and has_ready
             and bool(self._output_folder.text())
             and self._converter.calibre_available
             and not self._batch_active
         )
         self._convert_button.setEnabled(can_convert)
         self._clear_button.setEnabled(count > 0 and not self._batch_active)
+        self._retry_failed_button.setEnabled(has_retryable and not self._batch_active)
+        self._retry_failed_button.setVisible(has_retryable)
         self._set_all_combo.setEnabled(count > 0 and not self._batch_active)
         self._apply_all_button.setEnabled(count > 0 and not self._batch_active)
+        self._overwrite_combo.setEnabled(count > 0 and not self._batch_active)
         self._browse_folder_button.setEnabled(not self._batch_active)
-        self._add_button.setEnabled(not self._batch_active)
         self._drop_area.setEnabled(not self._batch_active)
+        self._cancel_current_button.setVisible(self._batch_active)
+        self._cancel_batch_button.setVisible(self._batch_active)
 
         if not self._batch_active:
             self._summary.setText(self._idle_summary())
@@ -491,40 +635,25 @@ class MainWindow(QMainWindow):
         count = len(items)
         if count == 0:
             return "0 books • Ready"
-
         completed = sum(item.status is QueueStatus.COMPLETED for item in items)
-        failed = sum(item.status is QueueStatus.FAILED for item in items)
-        ready = sum(item.status is QueueStatus.READY for item in items)
         if completed == count:
             noun = "book" if count == 1 else "books"
             return f"{count} {noun} converted successfully"
-        if completed or failed:
-            parts = []
-            if completed:
-                parts.append(f"{completed} completed")
-            if failed:
-                parts.append(f"{failed} failed")
-            if ready:
-                parts.append(f"{ready} ready")
-            return " • ".join(parts)
-        noun = "book" if count == 1 else "books"
-        return f"{count} {noun} • Ready"
 
-    def _confirm_replace(self, output_path: Path) -> bool:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Replace existing file?")
-        dialog.setText(output_path.name)
-        dialog.setInformativeText(
-            "A file with this name already exists. Replace it for this book?"
+        labels = (
+            (QueueStatus.COMPLETED, "completed"),
+            (QueueStatus.FAILED, "failed"),
+            (QueueStatus.CANCELLED, "cancelled"),
+            (QueueStatus.SKIPPED, "skipped"),
+            (QueueStatus.READY, "ready"),
+            (QueueStatus.WAITING, "waiting"),
         )
-        replace_button = dialog.addButton(
-            "Replace", QMessageBox.ButtonRole.AcceptRole
-        )
-        skip_button = dialog.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
-        dialog.setDefaultButton(skip_button)
-        dialog.exec()
-        return dialog.clickedButton() is replace_button
+        parts = [
+            f"{amount} {label}"
+            for status, label in labels
+            if (amount := sum(item.status is status for item in items))
+        ]
+        return " • ".join(parts)
 
     @Slot(str)
     def _open_result_file(self, item_id: str) -> None:
@@ -560,11 +689,16 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._thread is not None and self._thread.isRunning():
-            QMessageBox.information(
+            answer = QMessageBox.question(
                 self,
                 "Conversion in progress",
-                "Please wait for the current batch to finish before closing BookForge.",
+                "A conversion is still running.\n\nCancel the batch and exit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._closing_after_cancel = True
+                self._cancel_batch()
             event.ignore()
             return
         super().closeEvent(event)

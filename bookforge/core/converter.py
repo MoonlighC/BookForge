@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from threading import Event
+from uuid import uuid4
 
 from bookforge.core.calibre import (
     CalibreAdapter,
+    CalibreCancelledError,
     CalibreNotFoundError,
     CalibreProcessError,
 )
@@ -42,6 +46,14 @@ _FORMATS_BY_EXTENSION = {item.extension: item for item in BOOK_FORMATS}
 
 class ConversionError(RuntimeError):
     """A user-facing conversion or validation error."""
+
+    def __init__(self, message: str, *, log: str = "") -> None:
+        super().__init__(message)
+        self.log = log
+
+
+class ConversionCancelled(ConversionError):
+    """Raised when the active conversion was cancelled by the user."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +90,19 @@ class ConverterService:
 
         return output_path
 
+    def preflight(
+        self, input_path: Path, output_folder: Path, output_format: str
+    ) -> Path:
+        """Validate one request without starting Calibre."""
+        source = input_path.expanduser().resolve()
+        destination_folder = output_folder.expanduser().resolve()
+        self._validate_source(source)
+        self._validate_destination_folder(destination_folder)
+        output_path = self.output_path_for(source, destination_folder, output_format)
+        if _paths_are_same(source, output_path):
+            raise ConversionError("Input and output paths cannot be identical.")
+        return output_path
+
     def convert(
         self,
         input_path: Path,
@@ -85,37 +110,68 @@ class ConverterService:
         output_format: str = "azw3",
         *,
         overwrite: bool = False,
+        cancel_event: Event | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> ConversionResult:
         source = input_path.expanduser().resolve()
         destination_folder = output_folder.expanduser().resolve()
-
-        self._validate_source(source)
-        self._validate_destination_folder(destination_folder)
-        output_path = self.output_path_for(source, destination_folder, output_format)
-        if _paths_are_same(source, output_path):
-            raise ConversionError("Input and output paths cannot be identical.")
+        output_path = self.preflight(source, destination_folder, output_format)
         if output_path.exists() and not overwrite:
             raise ConversionError(
                 "The output file already exists and was not replaced."
             )
 
+        temporary_path = destination_folder / (
+            f".{output_path.stem}.bookforge-{uuid4().hex}{output_path.suffix}"
+        )
+
         try:
-            result = self._calibre.run(source, output_path)
+            result = self._calibre.run(
+                source,
+                temporary_path,
+                cancel_event=cancel_event,
+                on_output=on_output,
+            )
         except CalibreNotFoundError as exc:
             raise ConversionError(
                 "Calibre was not found. Install Calibre before converting books."
             ) from exc
+        except CalibreCancelledError as exc:
+            _remove_partial_output(temporary_path)
+            raise ConversionCancelled("Conversion cancelled.", log=exc.output) from exc
         except CalibreProcessError as exc:
+            _remove_partial_output(temporary_path)
             detail = _last_useful_line(exc.output)
             message = "Calibre could not convert this book."
             if detail:
                 message = f"{message} {detail}"
-            raise ConversionError(message) from exc
+            raise ConversionError(message, log=exc.output) from exc
+        except Exception:
+            _remove_partial_output(temporary_path)
+            raise
 
-        if not output_path.is_file() or output_path.stat().st_size == 0:
+        if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
+            _remove_partial_output(temporary_path)
             raise ConversionError(
-                "Calibre finished, but the output file was not created."
+                "Calibre finished, but the output file was not created.",
+                log=result.output,
             )
+
+        if output_path.exists() and not overwrite:
+            _remove_partial_output(temporary_path)
+            raise ConversionError(
+                "The output file appeared during conversion and was not replaced.",
+                log=result.output,
+            )
+
+        try:
+            os.replace(temporary_path, output_path)
+        except OSError as exc:
+            _remove_partial_output(temporary_path)
+            raise ConversionError(
+                "The converted file could not be saved in the output folder.",
+                log=result.output,
+            ) from exc
 
         return ConversionResult(output_path=output_path, log=result.output)
 
@@ -143,6 +199,13 @@ def _last_useful_line(output: str) -> str:
     if not lines:
         return ""
     return lines[-1][:300]
+
+
+def _remove_partial_output(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def get_input_format(input_format: str) -> BookFormat:

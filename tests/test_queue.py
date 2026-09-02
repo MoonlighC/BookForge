@@ -74,6 +74,36 @@ class ConversionQueueTests(unittest.TestCase):
         self.assertEqual(format_file_size(round(1.2 * 1024 * 1024)), "1.2 MB")
         self.assertEqual(format_file_size(14 * 1024 * 1024), "14.0 MB")
 
+    def test_retry_resets_failed_cancelled_and_skipped_state(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = [root / f"{name}.epub" for name in ("Failed", "Cancelled", "Skipped")]
+            for path in paths:
+                path.write_bytes(b"book")
+            queue = ConversionQueue()
+            queue.add_paths(paths)
+            statuses = (
+                QueueStatus.FAILED,
+                QueueStatus.CANCELLED,
+                QueueStatus.SKIPPED,
+            )
+            for item, status in zip(queue.items, statuses, strict=True):
+                item.status = status
+                item.error_message = "old error"
+                item.log = "old log"
+                item.progress = 42
+                item.result_path = root / "old.azw3"
+
+            retried = queue.retry_failed()
+
+            self.assertEqual(len(retried), 3)
+            for item in queue.items:
+                self.assertEqual(item.status, QueueStatus.READY)
+                self.assertEqual(item.error_message, "")
+                self.assertEqual(item.log, "")
+                self.assertIsNone(item.progress)
+                self.assertIsNone(item.result_path)
+
 
 if __name__ == "__main__":
     unittest.main()
