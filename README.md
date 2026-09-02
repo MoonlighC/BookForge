@@ -6,7 +6,7 @@ Designed for simple local conversion—no accounts, cloud uploads, telemetry, or
 
 ## Screenshot
 
-<!-- Add a BookForge screenshot here before or after release. -->
+![BookForge main window](assets/screenshots/bookforge-main.png)
 
 ## Features
 
