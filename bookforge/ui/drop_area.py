@@ -1,4 +1,4 @@
-"""Clickable EPUB drag-and-drop area."""
+"""Clickable drag-and-drop area for supported book formats."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+
+from bookforge.core.converter import INPUT_FORMATS, SUPPORTED_INPUT_SUFFIXES
 
 
 class DropArea(QFrame):
@@ -29,9 +31,13 @@ class DropArea(QFrame):
         icon.setObjectName("dropIcon")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        title = QLabel("Drop your EPUB here")
+        title = QLabel("Drop an e-book here")
         title.setObjectName("dropTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        formats = QLabel(" • ".join(item.label for item in INPUT_FORMATS))
+        formats.setObjectName("dropFormats")
+        formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         hint = QLabel("or click to browse")
         hint.setObjectName("dropHint")
@@ -39,10 +45,11 @@ class DropArea(QFrame):
 
         layout.addWidget(icon)
         layout.addWidget(title)
+        layout.addWidget(formats)
         layout.addWidget(hint)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if self._epub_from_urls(event.mimeData().urls()) is not None:
+        if self._local_file_from_urls(event.mimeData().urls()) is not None:
             event.acceptProposedAction()
             self.setProperty("dragActive", True)
             self.style().unpolish(self)
@@ -56,9 +63,20 @@ class DropArea(QFrame):
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._clear_drag_state()
-        path = self._epub_from_urls(event.mimeData().urls())
+        path = self._local_file_from_urls(event.mimeData().urls())
         if path is None:
-            self.file_rejected.emit("Please drop a single EPUB file.")
+            self.file_rejected.emit("Please drop a single supported book file.")
+            event.ignore()
+            return
+        if not path.is_file():
+            self.file_rejected.emit("The dropped file is no longer available.")
+            event.ignore()
+            return
+        if path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
+            self.file_rejected.emit(
+                "Unsupported input format. Please choose EPUB, AZW3, MOBI, "
+                "FB2, DOCX, TXT, or PDF."
+            )
             event.ignore()
             return
         event.acceptProposedAction()
@@ -75,9 +93,8 @@ class DropArea(QFrame):
         self.style().polish(self)
 
     @staticmethod
-    def _epub_from_urls(urls) -> Path | None:  # type: ignore[no-untyped-def]
+    def _local_file_from_urls(urls) -> Path | None:  # type: ignore[no-untyped-def]
         local_paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
         if len(local_paths) != 1:
             return None
-        path = local_paths[0]
-        return path if path.suffix.lower() == ".epub" and path.is_file() else None
+        return local_paths[0]

@@ -2,18 +2,18 @@
 
 ## Overview
 
-BookForge is a local desktop application for converting e-books. The current development version accepts an EPUB file and uses Calibre's `ebook-convert` command-line tool to produce the selected output format.
+BookForge is a local desktop application for converting e-books and documents between common formats. It uses Calibre's `ebook-convert` command-line tool to produce the selected output format.
 
 The application is built with Python and PySide6 and is currently developed primarily for Windows 10 and Windows 11.
 
 ## Features
 
-- Select an EPUB through a file dialog or drag and drop.
+- Select an EPUB, AZW3, MOBI, FB2, DOCX, TXT, or PDF file through a file dialog or drag and drop.
 - Convert one book at a time to AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT.
 - Run conversions outside the GUI thread so the application remains responsive.
 - Use the source folder as the default output folder, with an option to choose another location.
 - Confirm before replacing an existing output file.
-- Use a safe `_converted` filename when converting EPUB to EPUB.
+- Use a safe `_converted` filename whenever the input and output formats match.
 - Display the completed filename and output path in a result panel.
 - Open the converted file or its containing folder from the result panel.
 - Handle missing files, unavailable folders, Calibre errors, and missing output files with concise messages.
@@ -106,37 +106,56 @@ Calibre is open-source software distributed under GPLv3. Packaging and distribut
 
 ## Usage
 
-1. Drop an EPUB onto the selection area, or click the area and browse for a file.
+1. Drop a supported e-book or document onto the selection area, or click the area and browse for a file.
 2. Select an output format. AZW3 is the default.
 3. Select an output folder if necessary. The source folder is used by default.
 4. Click the conversion button and wait for the operation to complete.
 5. Use **Open file** or **Open folder** in the result panel when the conversion succeeds.
 
-For example, converting `Dune.epub` to AZW3 creates `Dune.azw3`. EPUB-to-EPUB conversion uses a safe name such as `Dune_converted.epub`, preventing accidental replacement of the source file.
+For example, converting `Dune.fb2` to AZW3 creates `Dune.azw3`, while converting `Dune.fb2` to FB2 uses the safe name `Dune_converted.fb2`. Same-format conversions never target the source path directly.
 
-## Supported conversions
+## Supported formats
 
-- EPUB → AZW3
-- EPUB → EPUB
-- EPUB → MOBI
-- EPUB → PDF
-- EPUB → FB2
-- EPUB → DOCX
-- EPUB → TXT
+Supported input formats:
 
-The practical availability and quality of a conversion depend on Calibre and the contents of the source EPUB.
+- EPUB
+- AZW3
+- MOBI
+- FB2
+- DOCX
+- TXT
+- PDF
+
+Supported output formats:
+
+- AZW3
+- EPUB
+- MOBI
+- PDF
+- FB2
+- DOCX
+- TXT
+
+Examples include:
+
+- FB2 → AZW3
+- MOBI → EPUB
+- TXT → PDF
+- AZW3 → EPUB
+- DOCX → TXT
+
+BookForge does not artificially restrict input/output combinations. The practical availability and quality of a conversion depend on Calibre and the contents of the source file. PDF input can be less predictable because it is usually fixed-layout.
 
 ## Development status
 
-BookForge is currently at Phase 2: multiple output formats, explicit overwrite confirmation, and result actions are implemented.
+BookForge is currently at Phase 3: multiple input and output formats, explicit overwrite confirmation, same-format source protection, and result actions are implemented.
 
 A real EPUB → PDF conversion has been manually verified on Windows with a separately installed copy of Calibre. BookForge successfully invoked Calibre's `ebook-convert`, the PDF output file was created, and the result panel correctly displayed the completed filename, output path, **Open file**, and **Open folder** actions.
 
-The other listed output formats are supported by the current interface and conversion pipeline, but they have not all been manually verified with real books yet.
+The other listed formats and input/output combinations are supported by the current interface and conversion pipeline, but they have not all been manually verified with real books yet.
 
 ## Current limitations
 
-- EPUB is the only supported input format.
 - Only one book can be processed at a time.
 - There is no batch processing or conversion queue.
 - Conversion cannot currently be cancelled after it starts.

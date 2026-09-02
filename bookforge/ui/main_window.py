@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
 )
 
 from bookforge.core.converter import (
+    INPUT_FORMATS,
     OUTPUT_FORMATS,
     ConversionError,
     ConversionResult,
     ConverterService,
+    get_input_format,
 )
 from bookforge.ui.drop_area import DropArea
 
@@ -116,11 +118,14 @@ class MainWindow(QMainWindow):
 
         selected_label = QLabel("Selected file")
         selected_label.setObjectName("sectionLabel")
-        self._selected_file = QLabel("No EPUB selected")
+        self._selected_file = QLabel("No book selected")
         self._selected_file.setObjectName("selectedFile")
-        self._selected_file.setToolTip("No EPUB selected")
+        self._selected_file.setToolTip("No book selected")
+        self._selected_input_format = QLabel("Input format: —")
+        self._selected_input_format.setObjectName("inputFormat")
         root.addWidget(selected_label)
         root.addWidget(self._selected_file)
+        root.addWidget(self._selected_input_format)
 
         options_row = QHBoxLayout()
         options_row.setSpacing(18)
@@ -148,7 +153,7 @@ class MainWindow(QMainWindow):
         folder_row.setSpacing(8)
         self._output_folder = QLineEdit()
         self._output_folder.setReadOnly(True)
-        self._output_folder.setPlaceholderText("Select an EPUB first")
+        self._output_folder.setPlaceholderText("Select a book first")
         browse_button = QPushButton("Browse")
         browse_button.clicked.connect(self._browse_output_folder)
         folder_row.addWidget(self._output_folder, 1)
@@ -233,25 +238,32 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _browse_input(self) -> None:
+        patterns = " ".join(f"*.{item.extension}" for item in INPUT_FORMATS)
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "Select an EPUB",
+            "Select an e-book",
             str(self._input_path.parent if self._input_path else Path.home()),
-            "EPUB books (*.epub)",
+            f"Supported books ({patterns});;All files (*.*)",
         )
         if filename:
             self._select_input(Path(filename))
 
     @Slot(object)
     def _select_input(self, path: Path) -> None:
-        if path.suffix.lower() != ".epub" or not path.is_file():
-            self._show_warning("Please select an existing EPUB file.")
+        if not path.is_file():
+            self._show_warning("Please select an existing supported book file.")
+            return
+        try:
+            input_format = get_input_format(path.suffix)
+        except ConversionError as exc:
+            self._show_warning(str(exc))
             return
 
         self._input_path = path.resolve()
         self._clear_result()
         self._selected_file.setText(self._input_path.name)
         self._selected_file.setToolTip(str(self._input_path))
+        self._selected_input_format.setText(f"Input format: {input_format.label}")
         if self._output_folder_is_automatic:
             self._output_folder.setText(str(self._input_path.parent))
         self._status.setText("Status: Ready")
@@ -273,10 +285,10 @@ class MainWindow(QMainWindow):
         if self._thread is not None and self._thread.isRunning():
             return
         if self._input_path is None:
-            self._show_warning("Select an EPUB file before converting.")
+            self._show_warning("Select a supported book file before converting.")
             return
         if not self._input_path.is_file():
-            self._show_warning("The selected EPUB file no longer exists.")
+            self._show_warning("The selected file no longer exists.")
             return
         if not self._output_folder.text():
             self._show_warning("Select an output folder before converting.")

@@ -82,6 +82,19 @@ QLabel#dropHint {
     color: #667085;
 }
 
+QLabel#dropFormats {
+    background: transparent;
+    color: #4f6f9f;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#inputFormat {
+    background: transparent;
+    color: #667085;
+    font-size: 12px;
+}
+
 QComboBox,
 QLineEdit {
     min-height: 40px;

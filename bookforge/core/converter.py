@@ -13,27 +13,31 @@ from bookforge.core.calibre import (
 )
 
 
-SUPPORTED_INPUT_SUFFIXES = frozenset({".epub"})
-
-
 @dataclass(frozen=True, slots=True)
-class OutputFormat:
+class BookFormat:
     extension: str
     label: str
     description: str
+    input_order: int
+    output_order: int
 
 
-OUTPUT_FORMATS = (
-    OutputFormat("azw3", "AZW3", "Recommended for Kindle"),
-    OutputFormat("epub", "EPUB", "Widely supported e-book format"),
-    OutputFormat("mobi", "MOBI", "Legacy Kindle-compatible format"),
-    OutputFormat("pdf", "PDF", "Fixed-layout document"),
-    OutputFormat("fb2", "FB2", "FictionBook format"),
-    OutputFormat("docx", "DOCX", "Microsoft Word document"),
-    OutputFormat("txt", "TXT", "Plain text"),
+BOOK_FORMATS = (
+    BookFormat("azw3", "AZW3", "Recommended for Kindle", 1, 0),
+    BookFormat("epub", "EPUB", "Widely supported e-book format", 0, 1),
+    BookFormat("mobi", "MOBI", "Legacy Kindle-compatible format", 2, 2),
+    BookFormat("pdf", "PDF", "Fixed-layout document", 6, 3),
+    BookFormat("fb2", "FB2", "FictionBook format", 3, 4),
+    BookFormat("docx", "DOCX", "Microsoft Word document", 4, 5),
+    BookFormat("txt", "TXT", "Plain text", 5, 6),
+)
+INPUT_FORMATS = tuple(sorted(BOOK_FORMATS, key=lambda item: item.input_order))
+OUTPUT_FORMATS = tuple(sorted(BOOK_FORMATS, key=lambda item: item.output_order))
+SUPPORTED_INPUT_SUFFIXES = frozenset(
+    f".{item.extension}" for item in INPUT_FORMATS
 )
 SUPPORTED_OUTPUT_FORMATS = tuple(item.extension for item in OUTPUT_FORMATS)
-_OUTPUT_FORMATS_BY_EXTENSION = {item.extension: item for item in OUTPUT_FORMATS}
+_FORMATS_BY_EXTENSION = {item.extension: item for item in BOOK_FORMATS}
 
 
 class ConversionError(RuntimeError):
@@ -70,7 +74,7 @@ class ConverterService:
         output_path = output_folder / f"{output_stem}.{format_spec.extension}"
 
         if _paths_are_same(input_path, output_path):
-            raise ConversionError("The output file cannot overwrite the source EPUB.")
+            raise ConversionError("Input and output paths cannot be identical.")
 
         return output_path
 
@@ -87,7 +91,7 @@ class ConverterService:
         self._validate_destination_folder(destination_folder)
         output_path = self.output_path_for(source, destination_folder, output_format)
         if _paths_are_same(source, output_path):
-            raise ConversionError("The output file cannot overwrite the source EPUB.")
+            raise ConversionError("Input and output paths cannot be identical.")
 
         try:
             result = self._calibre.run(source, output_path)
@@ -112,11 +116,10 @@ class ConverterService:
     @staticmethod
     def _validate_source(input_path: Path) -> None:
         if not input_path.exists():
-            raise ConversionError("The selected EPUB file no longer exists.")
+            raise ConversionError("The selected file no longer exists.")
         if not input_path.is_file():
             raise ConversionError("The selected path is not a file.")
-        if input_path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
-            raise ConversionError("BookForge currently supports EPUB input files only.")
+        get_input_format(input_path.suffix)
 
     @staticmethod
     def _validate_destination_folder(output_folder: Path) -> None:
@@ -136,17 +139,32 @@ def _last_useful_line(output: str) -> str:
     return lines[-1][:300]
 
 
-def get_output_format(output_format: str) -> OutputFormat:
-    """Return a validated output format definition."""
-    if not isinstance(output_format, str):
-        raise ConversionError("The selected output format is not supported.")
-    normalized_format = output_format.strip().lower()
+def get_input_format(input_format: str) -> BookFormat:
+    """Return a validated input format definition."""
+    normalized_format = _normalize_format(input_format, "input")
     try:
-        return _OUTPUT_FORMATS_BY_EXTENSION[normalized_format]
+        return _FORMATS_BY_EXTENSION[normalized_format]
+    except KeyError as exc:
+        raise ConversionError(
+            f"Unsupported input format: {input_format or 'unknown'}."
+        ) from exc
+
+
+def get_output_format(output_format: str) -> BookFormat:
+    """Return a validated output format definition."""
+    normalized_format = _normalize_format(output_format, "output")
+    try:
+        return _FORMATS_BY_EXTENSION[normalized_format]
     except KeyError as exc:
         raise ConversionError(
             f"Output format {output_format!r} is not supported."
         ) from exc
+
+
+def _normalize_format(value: str, format_role: str) -> str:
+    if not isinstance(value, str):
+        raise ConversionError(f"The selected {format_role} format is not supported.")
+    return value.strip().lower().removeprefix(".")
 
 
 def _paths_are_same(first: Path, second: Path) -> bool:
