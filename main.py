@@ -6,6 +6,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from bookforge import __version__
 from bookforge.ui.main_window import MainWindow
 from bookforge.ui.styles import APP_STYLESHEET
 
@@ -13,6 +14,7 @@ from bookforge.ui.styles import APP_STYLESHEET
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("BookForge")
+    app.setApplicationVersion(__version__)
     app.setOrganizationName("BookForge")
     app.setStyle("Fusion")
     app.setStyleSheet(APP_STYLESHEET)

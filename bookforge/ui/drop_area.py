@@ -8,11 +8,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
-from bookforge.core.converter import INPUT_FORMATS, SUPPORTED_INPUT_SUFFIXES
+from bookforge.core.converter import INPUT_FORMATS
 
 
 class DropArea(QFrame):
-    file_selected = Signal(object)
+    files_selected = Signal(object)
     browse_requested = Signal()
     file_rejected = Signal(str)
 
@@ -21,7 +21,7 @@ class DropArea(QFrame):
         self.setObjectName("dropArea")
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(200)
+        self.setMinimumHeight(180)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -31,9 +31,9 @@ class DropArea(QFrame):
         icon.setObjectName("dropIcon")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        title = QLabel("Drop an e-book here")
-        title.setObjectName("dropTitle")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title = QLabel("Drop books here")
+        self._title.setObjectName("dropTitle")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         formats = QLabel(" • ".join(item.label for item in INPUT_FORMATS))
         formats.setObjectName("dropFormats")
@@ -44,12 +44,12 @@ class DropArea(QFrame):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout.addWidget(icon)
-        layout.addWidget(title)
+        layout.addWidget(self._title)
         layout.addWidget(formats)
         layout.addWidget(hint)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if self._local_file_from_urls(event.mimeData().urls()) is not None:
+        if self._local_files_from_urls(event.mimeData().urls()):
             event.acceptProposedAction()
             self.setProperty("dragActive", True)
             self.style().unpolish(self)
@@ -63,24 +63,13 @@ class DropArea(QFrame):
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._clear_drag_state()
-        path = self._local_file_from_urls(event.mimeData().urls())
-        if path is None:
-            self.file_rejected.emit("Please drop a single supported book file.")
-            event.ignore()
-            return
-        if not path.is_file():
-            self.file_rejected.emit("The dropped file is no longer available.")
-            event.ignore()
-            return
-        if path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
-            self.file_rejected.emit(
-                "Unsupported input format. Please choose EPUB, AZW3, MOBI, "
-                "FB2, DOCX, TXT, or PDF."
-            )
+        paths = self._local_files_from_urls(event.mimeData().urls())
+        if not paths:
+            self.file_rejected.emit("Please drop one or more local book files.")
             event.ignore()
             return
         event.acceptProposedAction()
-        self.file_selected.emit(path)
+        self.files_selected.emit(paths)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -92,9 +81,11 @@ class DropArea(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_compact(self, compact: bool) -> None:
+        self.setMinimumHeight(104 if compact else 180)
+        self.setMaximumHeight(116 if compact else 16777215)
+        self._title.setText("Drop more books here" if compact else "Drop books here")
+
     @staticmethod
-    def _local_file_from_urls(urls) -> Path | None:  # type: ignore[no-untyped-def]
-        local_paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
-        if len(local_paths) != 1:
-            return None
-        return local_paths[0]
+    def _local_files_from_urls(urls) -> list[Path]:  # type: ignore[no-untyped-def]
+        return [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]

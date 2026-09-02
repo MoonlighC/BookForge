@@ -83,6 +83,8 @@ class ConverterService:
         input_path: Path,
         output_folder: Path,
         output_format: str = "azw3",
+        *,
+        overwrite: bool = False,
     ) -> ConversionResult:
         source = input_path.expanduser().resolve()
         destination_folder = output_folder.expanduser().resolve()
@@ -92,6 +94,10 @@ class ConverterService:
         output_path = self.output_path_for(source, destination_folder, output_format)
         if _paths_are_same(source, output_path):
             raise ConversionError("Input and output paths cannot be identical.")
+        if output_path.exists() and not overwrite:
+            raise ConversionError(
+                "The output file already exists and was not replaced."
+            )
 
         try:
             result = self._calibre.run(source, output_path)

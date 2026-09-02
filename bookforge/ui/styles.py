@@ -29,6 +29,12 @@ QLabel#sectionLabel {
     font-weight: 600;
 }
 
+QLabel#sectionTitle {
+    color: #1d2939;
+    font-size: 16px;
+    font-weight: 700;
+}
+
 QLabel#formatDescription {
     background: transparent;
     color: #667085;
@@ -61,6 +67,85 @@ QFrame#dropArea:hover,
 QFrame#dropArea[dragActive="true"] {
     background: #f3f7ff;
     border-color: #4f7ee8;
+}
+
+QFrame#controlsPanel,
+QFrame#queueItem {
+    background: #ffffff;
+    border: 1px solid #dfe4ec;
+    border-radius: 12px;
+}
+
+QFrame#queueItem:hover {
+    border-color: #c2cad6;
+}
+
+QScrollArea#queueScroll,
+QWidget#queueContainer,
+QScrollArea#queueScroll > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+
+QLabel#emptyQueue {
+    color: #98a2b3;
+    padding: 28px;
+}
+
+QLabel#queueFilename {
+    background: transparent;
+    color: #1d2939;
+    font-size: 15px;
+    font-weight: 650;
+}
+
+QLabel#queueDetails,
+QLabel#subtleNote {
+    background: transparent;
+    color: #667085;
+    font-size: 12px;
+}
+
+QLabel#conversionArrow {
+    background: transparent;
+    color: #4f7ee8;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QLabel#queueStatus {
+    background: #eef2f7;
+    border-radius: 11px;
+    color: #475467;
+    font-size: 12px;
+    font-weight: 650;
+    padding: 4px 9px;
+}
+
+QLabel#queueStatus[queueState="waiting"] {
+    background: #fff5d9;
+    color: #815b00;
+}
+
+QLabel#queueStatus[queueState="converting"] {
+    background: #e9f0ff;
+    color: #2859bd;
+}
+
+QLabel#queueStatus[queueState="completed"] {
+    background: #e8f7ef;
+    color: #18794e;
+}
+
+QLabel#queueStatus[queueState="failed"] {
+    background: #ffebeb;
+    color: #b42318;
+}
+
+QLabel#queueError {
+    background: transparent;
+    color: #b42318;
+    font-size: 12px;
 }
 
 QLabel#dropIcon {
@@ -115,6 +200,13 @@ QComboBox::drop-down {
     width: 28px;
 }
 
+QComboBox#itemFormatCombo {
+    min-height: 32px;
+    max-height: 32px;
+    min-width: 105px;
+    padding-left: 10px;
+}
+
 QPushButton {
     min-height: 40px;
     background: #ffffff;
@@ -147,6 +239,30 @@ QPushButton#primaryButton:hover {
 QPushButton#primaryButton:disabled {
     background: #aebfe4;
     border-color: #aebfe4;
+}
+
+QPushButton#removeButton {
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    border: none;
+    border-radius: 14px;
+    color: #667085;
+    font-size: 20px;
+    padding: 0;
+}
+
+QPushButton#removeButton:hover {
+    background: #feecec;
+    color: #b42318;
+}
+
+QPushButton#compactButton {
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0 11px;
+    font-size: 12px;
 }
 
 QProgressBar {

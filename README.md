@@ -8,14 +8,17 @@ The application is built with Python and PySide6 and is currently developed prim
 
 ## Features
 
-- Select an EPUB, AZW3, MOBI, FB2, DOCX, TXT, or PDF file through a file dialog or drag and drop.
-- Convert one book at a time to AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT.
-- Run conversions outside the GUI thread so the application remains responsive.
-- Use the source folder as the default output folder, with an option to choose another location.
-- Confirm before replacing an existing output file.
+- Add multiple EPUB, AZW3, MOBI, FB2, DOCX, TXT, and PDF files through a multi-select file dialog or drag and drop.
+- Mix input formats in one in-memory conversion queue.
+- Choose AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT separately for every queued book.
+- Apply one output format to the whole queue, then adjust individual rows as needed.
+- Process the queue sequentially in one worker thread so the interface remains responsive and Calibre processes do not run concurrently.
+- Use one shared output directory, initially set from the first queued book.
+- Track Ready, Waiting, Converting, Completed, and Failed states independently for every item.
+- Confirm before replacing each existing output file.
 - Use a safe `_converted` filename whenever the input and output formats match.
-- Display the completed filename and output path in a result panel.
-- Open the converted file or its containing folder from the result panel.
+- Open a completed file or its containing folder directly from its queue row.
+- Skip duplicate physical source paths already present in the queue.
 - Handle missing files, unavailable folders, Calibre errors, and missing output files with concise messages.
 
 ## Requirements
@@ -106,11 +109,12 @@ Calibre is open-source software distributed under GPLv3. Packaging and distribut
 
 ## Usage
 
-1. Drop a supported e-book or document onto the selection area, or click the area and browse for a file.
-2. Select an output format. AZW3 is the default.
-3. Select an output folder if necessary. The source folder is used by default.
-4. Click the conversion button and wait for the operation to complete.
-5. Use **Open file** or **Open folder** in the result panel when the conversion succeeds.
+1. Drop one or more supported books or documents onto the drop area, or use **Add books** and select several files.
+2. Choose an output format in each row. AZW3 is the default, except AZW3 sources default to EPUB to avoid a same-format conversion.
+3. Optionally choose a format under **Set every book to** and click **Apply**. Individual rows remain editable afterward.
+4. Select the shared output folder if necessary. The first book's source folder is used by default.
+5. Click **Convert all**. BookForge converts the pending items one at a time and continues after individual failures.
+6. Use **Open file** or **Open folder** on any completed row.
 
 For example, converting `Dune.fb2` to AZW3 creates `Dune.azw3`, while converting `Dune.fb2` to FB2 uses the safe name `Dune_converted.fb2`. Same-format conversions never target the source path directly.
 
@@ -148,7 +152,7 @@ BookForge does not artificially restrict input/output combinations. The practica
 
 ## Development status
 
-BookForge is currently at Phase 3: multiple input and output formats, explicit overwrite confirmation, same-format source protection, and result actions are implemented.
+BookForge 0.4.0 is currently at Phase 4: a scrollable multi-book queue, mixed inputs, per-book output formats, sequential batch processing, duplicate prevention, per-item status and error reporting, and row-level result actions are implemented.
 
 A real EPUB → PDF conversion has been manually verified on Windows with a separately installed copy of Calibre. BookForge successfully invoked Calibre's `ebook-convert`, the PDF output file was created, and the result panel correctly displayed the completed filename, output path, **Open file**, and **Open folder** actions.
 
@@ -156,10 +160,11 @@ The other listed formats and input/output combinations are supported by the curr
 
 ## Current limitations
 
-- Only one book can be processed at a time.
-- There is no batch processing or conversion queue.
 - Conversion cannot currently be cancelled after it starts.
 - Calibre progress is represented by a busy indicator rather than a parsed percentage.
+- Existing output files use an ask-for-each-file policy; batch-wide replace and skip policies are not exposed yet.
+- The queue is in memory only and is not restored after restarting BookForge.
+- Conversions run sequentially; parallel conversion is intentionally not implemented.
 - Advanced Calibre conversion options are not exposed in the interface.
 - There is no metadata editor, cover preview, conversion history, or packaged executable.
 - Calibre must be installed separately.
