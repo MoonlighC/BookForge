@@ -1,0 +1,159 @@
+"""High-level validation and conversion workflow."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+
+from bookforge.core.calibre import (
+    CalibreAdapter,
+    CalibreNotFoundError,
+    CalibreProcessError,
+)
+
+
+SUPPORTED_INPUT_SUFFIXES = frozenset({".epub"})
+
+
+@dataclass(frozen=True, slots=True)
+class OutputFormat:
+    extension: str
+    label: str
+    description: str
+
+
+OUTPUT_FORMATS = (
+    OutputFormat("azw3", "AZW3", "Recommended for Kindle"),
+    OutputFormat("epub", "EPUB", "Widely supported e-book format"),
+    OutputFormat("mobi", "MOBI", "Legacy Kindle-compatible format"),
+    OutputFormat("pdf", "PDF", "Fixed-layout document"),
+    OutputFormat("fb2", "FB2", "FictionBook format"),
+    OutputFormat("docx", "DOCX", "Microsoft Word document"),
+    OutputFormat("txt", "TXT", "Plain text"),
+)
+SUPPORTED_OUTPUT_FORMATS = tuple(item.extension for item in OUTPUT_FORMATS)
+_OUTPUT_FORMATS_BY_EXTENSION = {item.extension: item for item in OUTPUT_FORMATS}
+
+
+class ConversionError(RuntimeError):
+    """A user-facing conversion or validation error."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConversionResult:
+    output_path: Path
+    log: str
+
+
+class ConverterService:
+    """Validate a request and coordinate conversion through Calibre."""
+
+    def __init__(self, calibre: CalibreAdapter | None = None) -> None:
+        self._calibre = calibre or CalibreAdapter()
+
+    @property
+    def calibre_available(self) -> bool:
+        return self._calibre.is_available
+
+    @property
+    def calibre_executable(self) -> Path | None:
+        return self._calibre.executable
+
+    def output_path_for(
+        self, input_path: Path, output_folder: Path, output_format: str
+    ) -> Path:
+        format_spec = get_output_format(output_format)
+        output_stem = input_path.stem
+        if input_path.suffix.lower() == f".{format_spec.extension}":
+            output_stem = f"{output_stem}_converted"
+        output_path = output_folder / f"{output_stem}.{format_spec.extension}"
+
+        if _paths_are_same(input_path, output_path):
+            raise ConversionError("The output file cannot overwrite the source EPUB.")
+
+        return output_path
+
+    def convert(
+        self,
+        input_path: Path,
+        output_folder: Path,
+        output_format: str = "azw3",
+    ) -> ConversionResult:
+        source = input_path.expanduser().resolve()
+        destination_folder = output_folder.expanduser().resolve()
+
+        self._validate_source(source)
+        self._validate_destination_folder(destination_folder)
+        output_path = self.output_path_for(source, destination_folder, output_format)
+        if _paths_are_same(source, output_path):
+            raise ConversionError("The output file cannot overwrite the source EPUB.")
+
+        try:
+            result = self._calibre.run(source, output_path)
+        except CalibreNotFoundError as exc:
+            raise ConversionError(
+                "Calibre was not found. Install Calibre before converting books."
+            ) from exc
+        except CalibreProcessError as exc:
+            detail = _last_useful_line(exc.output)
+            message = "Calibre could not convert this book."
+            if detail:
+                message = f"{message} {detail}"
+            raise ConversionError(message) from exc
+
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            raise ConversionError(
+                "Calibre finished, but the output file was not created."
+            )
+
+        return ConversionResult(output_path=output_path, log=result.output)
+
+    @staticmethod
+    def _validate_source(input_path: Path) -> None:
+        if not input_path.exists():
+            raise ConversionError("The selected EPUB file no longer exists.")
+        if not input_path.is_file():
+            raise ConversionError("The selected path is not a file.")
+        if input_path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
+            raise ConversionError("BookForge currently supports EPUB input files only.")
+
+    @staticmethod
+    def _validate_destination_folder(output_folder: Path) -> None:
+        if not output_folder.exists():
+            raise ConversionError("The selected output folder does not exist.")
+        if not output_folder.is_dir():
+            raise ConversionError("The selected output path is not a folder.")
+        if not os.access(output_folder, os.W_OK):
+            raise ConversionError("The selected output folder is not writable.")
+
+
+def _last_useful_line(output: str) -> str:
+    """Return a short process detail suitable for a GUI error message."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return lines[-1][:300]
+
+
+def get_output_format(output_format: str) -> OutputFormat:
+    """Return a validated output format definition."""
+    if not isinstance(output_format, str):
+        raise ConversionError("The selected output format is not supported.")
+    normalized_format = output_format.strip().lower()
+    try:
+        return _OUTPUT_FORMATS_BY_EXTENSION[normalized_format]
+    except KeyError as exc:
+        raise ConversionError(
+            f"Output format {output_format!r} is not supported."
+        ) from exc
+
+
+def _paths_are_same(first: Path, second: Path) -> bool:
+    """Compare paths safely, including existing hard links on Windows."""
+    try:
+        return first.samefile(second)
+    except OSError:
+        first_key = os.path.normcase(str(first.expanduser().resolve()))
+        second_key = os.path.normcase(str(second.expanduser().resolve()))
+        return first_key == second_key
