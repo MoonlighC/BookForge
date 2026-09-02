@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from bookforge.core.metadata import BookMetadata, detect_cover_extension
+from bookforge.i18n import Translator
 
 
 class MetadataDialog(QDialog):
@@ -30,12 +31,15 @@ class MetadataDialog(QDialog):
         original: BookMetadata,
         current: BookMetadata,
         parent: QWidget | None = None,
+        translator: Translator | None = None,
     ) -> None:
         super().__init__(parent)
+        self._translator = translator or Translator()
+        tr = self._translator.tr
         self._original = original
         self._selected_cover_path = current.cover_path
         self._saved_metadata: BookMetadata | None = None
-        self.setWindowTitle(f"Edit metadata — {filename}")
+        self.setWindowTitle(tr("metadata.dialog_title", filename=filename))
         self.setModal(True)
         self.resize(760, 570)
         self.setMinimumSize(680, 520)
@@ -44,9 +48,7 @@ class MetadataDialog(QDialog):
         root.setContentsMargins(24, 22, 24, 20)
         root.setSpacing(16)
 
-        note = QLabel(
-            "Review this book before conversion. Changes apply only to the output."
-        )
+        note = QLabel(tr("metadata.note"))
         note.setObjectName("subtleNote")
         note.setWordWrap(True)
         root.addWidget(note)
@@ -55,15 +57,15 @@ class MetadataDialog(QDialog):
         content.setSpacing(22)
         cover_column = QVBoxLayout()
         cover_column.setSpacing(8)
-        cover_label = QLabel("Cover")
+        cover_label = QLabel(tr("metadata.cover"))
         cover_label.setObjectName("sectionLabel")
-        self._cover_preview = QLabel("No cover")
+        self._cover_preview = QLabel(tr("metadata.no_cover"))
         self._cover_preview.setObjectName("coverPreview")
         self._cover_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover_preview.setFixedSize(220, 300)
-        self._cover_preview.setAccessibleName("Book cover preview")
-        self._replace_cover = QPushButton("Replace cover")
-        self._replace_cover.setAccessibleName("Choose replacement cover")
+        self._cover_preview.setAccessibleName(tr("metadata.cover_preview"))
+        self._replace_cover = QPushButton(tr("metadata.replace_cover"))
+        self._replace_cover.setAccessibleName(tr("metadata.choose_cover_accessible"))
         self._replace_cover.clicked.connect(self._choose_cover)
         cover_column.addWidget(cover_label)
         cover_column.addWidget(self._cover_preview)
@@ -74,41 +76,41 @@ class MetadataDialog(QDialog):
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(12)
         self._title = QLineEdit()
-        self._title.setAccessibleName("Title")
+        self._title.setAccessibleName(tr("metadata.title"))
         self._authors = QLineEdit()
-        self._authors.setAccessibleName("Authors")
-        self._authors.setPlaceholderText("Separate multiple authors with semicolons")
+        self._authors.setAccessibleName(tr("metadata.authors_accessible"))
+        self._authors.setPlaceholderText(tr("metadata.authors_placeholder"))
         self._language = QLineEdit()
-        self._language.setAccessibleName("Language")
-        self._language.setPlaceholderText("Language name or code")
+        self._language.setAccessibleName(tr("metadata.language"))
+        self._language.setPlaceholderText(tr("metadata.language_placeholder"))
         self._publisher = QLineEdit()
-        self._publisher.setAccessibleName("Publisher")
+        self._publisher.setAccessibleName(tr("metadata.publisher"))
         self._series = QLineEdit()
-        self._series.setAccessibleName("Series")
+        self._series.setAccessibleName(tr("metadata.series"))
         self._series_index = QLineEdit()
-        self._series_index.setAccessibleName("Series index")
+        self._series_index.setAccessibleName(tr("metadata.series_index"))
         index_validator = QDoubleValidator(self)
         index_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         index_validator.setLocale(QLocale.c())
         self._series_index.setValidator(index_validator)
         self._tags = QLineEdit()
-        self._tags.setAccessibleName("Tags")
-        self._tags.setPlaceholderText("Comma-separated")
-        form.addRow("Title", self._title)
-        form.addRow("Author(s)", self._authors)
-        form.addRow("Language", self._language)
-        form.addRow("Publisher", self._publisher)
-        form.addRow("Series", self._series)
-        form.addRow("Series index", self._series_index)
-        form.addRow("Tags", self._tags)
+        self._tags.setAccessibleName(tr("metadata.tags"))
+        self._tags.setPlaceholderText(tr("metadata.tags_placeholder"))
+        form.addRow(tr("metadata.title"), self._title)
+        form.addRow(tr("metadata.authors"), self._authors)
+        form.addRow(tr("metadata.language"), self._language)
+        form.addRow(tr("metadata.publisher"), self._publisher)
+        form.addRow(tr("metadata.series"), self._series)
+        form.addRow(tr("metadata.series_index"), self._series_index)
+        form.addRow(tr("metadata.tags"), self._tags)
 
         content.addLayout(cover_column)
         content.addLayout(form, 1)
         root.addLayout(content, 1)
 
         actions = QHBoxLayout()
-        reset_button = QPushButton("Reset")
-        reset_button.setAccessibleName("Reset metadata to original values")
+        reset_button = QPushButton(tr("metadata.reset"))
+        reset_button.setAccessibleName(tr("metadata.reset_accessible"))
         reset_button.clicked.connect(self._reset_to_original)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
@@ -118,7 +120,11 @@ class MetadataDialog(QDialog):
         buttons.rejected.connect(self.reject)
         save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         if save_button is not None:
+            save_button.setText(tr("metadata.save"))
             save_button.setDefault(True)
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_button is not None:
+            cancel_button.setText(tr("metadata.cancel"))
         actions.addWidget(reset_button)
         actions.addStretch(1)
         actions.addWidget(buttons)
@@ -139,16 +145,18 @@ class MetadataDialog(QDialog):
         )
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "Select cover image",
+            self._translator.tr("metadata.select_cover"),
             start,
-            "Cover images (*.jpg *.jpeg *.png)",
+            f'{self._translator.tr("metadata.cover_images")} (*.jpg *.jpeg *.png)',
         )
         if not filename:
             return
         path = Path(filename)
         if not self._is_readable_cover(path):
             QMessageBox.warning(
-                self, "Invalid cover", "Select a readable JPG, JPEG, or PNG image."
+                self,
+                self._translator.tr("metadata.invalid_cover"),
+                self._translator.tr("metadata.invalid_cover_text"),
             )
             return
         self._selected_cover_path = path.resolve()
@@ -167,15 +175,17 @@ class MetadataDialog(QDialog):
         ):
             QMessageBox.warning(
                 self,
-                "Invalid cover",
-                "The selected replacement cover is no longer readable.",
+                self._translator.tr("metadata.invalid_cover"),
+                self._translator.tr("metadata.cover_unreadable"),
             )
             return
         try:
             metadata = self._metadata_from_fields()
         except ValueError:
             QMessageBox.warning(
-                self, "Invalid series index", "Series index must be a number."
+                self,
+                self._translator.tr("metadata.invalid_series"),
+                self._translator.tr("metadata.invalid_series_text"),
             )
             return
         self._saved_metadata = metadata
@@ -225,12 +235,12 @@ class MetadataDialog(QDialog):
     def _show_cover(self, path: Path | None) -> None:
         if path is None or not path.is_file():
             self._cover_preview.setPixmap(QPixmap())
-            self._cover_preview.setText("No cover")
+            self._cover_preview.setText(self._translator.tr("metadata.no_cover"))
             return
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
             self._cover_preview.setPixmap(QPixmap())
-            self._cover_preview.setText("No cover")
+            self._cover_preview.setText(self._translator.tr("metadata.no_cover"))
             return
         scaled = pixmap.scaled(
             self._cover_preview.size(),

@@ -31,6 +31,8 @@ The application is built with Python and PySide6 for Windows 10 and Windows 11. 
 - Open a completed file or its containing folder directly from its queue row.
 - Skip duplicate physical source paths already present in the queue.
 - Handle missing files, unavailable folders, Calibre errors, and missing output files with concise messages.
+- Switch the complete interface live between English, German, and Russian from **Edit → Preferences** without changing or clearing the queue.
+- Use the system color scheme or choose a persistent light or dark theme with an application-wide palette and matching controls.
 
 ## Requirements
 
@@ -166,7 +168,7 @@ Desktop shortcuts:
 - Ctrl+Enter: convert all ready books when conversion is available
 - Ctrl+Q: exit BookForge
 
-BookForge remembers only application preferences: safe window geometry, a manually chosen output folder, the global output-format selection, and the overwrite policy. It does not persist the queue, books, logs, metadata, or covers. If a saved window position is no longer visible after a monitor change, BookForge falls back to a centered window. If a saved output folder no longer exists, automatic first-book-folder behavior resumes.
+BookForge remembers only application preferences: safe window geometry, a manually chosen output folder, the global output-format selection, the overwrite policy, interface language, and theme. It does not persist the queue, books, logs, metadata, or covers. If a saved window position is no longer visible after a monitor change, BookForge falls back to a centered window. If a saved output folder no longer exists, automatic first-book-folder behavior resumes.
 
 **Ask** prompts for each existing output and offers Replace, Skip, or Cancel batch. **Replace all** replaces existing outputs without further prompts, but never bypasses source-path or internal queue-collision protection. **Skip all** marks items whose outputs already exist as Skipped without starting Calibre.
 
@@ -216,7 +218,7 @@ BookForge does not artificially restrict input/output combinations. The practica
 
 ## Development status
 
-BookForge 0.9.0 includes the polished compact desktop interface, persistent non-sensitive settings, application icon and metadata, native menu and shortcuts, About dialog, packaged startup diagnostics, and a canonical PyInstaller one-folder GUI build. Metadata, cover, batch, cancellation, progress, retry, overwrite, and transactional output behavior remain in place.
+BookForge 0.10.0 adds complete English, German, and Russian interface localization; live language switching; and persistent System, Light, and Dark themes. It also refines spacing, empty-queue presentation, focus and disabled states, menus, dialogs, and compact queue controls while retaining the native title bar and established BookForge style. Metadata, cover, batch, cancellation, progress, retry, overwrite, and transactional output behavior remain in place.
 
 A real sequential batch has been verified on Windows with a separately installed copy of Calibre, including generated TXT → EPUB and TXT → PDF fixtures with spaces and Cyrillic characters in their paths. A generated TXT → EPUB metadata smoke test also verified an overridden title, author, generated PNG cover, and byte-for-byte source preservation. Completed rows retain **Open file** and **Open folder** actions.
 

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from bookforge.core.converter import OUTPUT_FORMATS, get_input_format
 from bookforge.core.metadata import MetadataStatus
 from bookforge.core.queue import QueueItem, QueueStatus, format_file_size
+from bookforge.i18n import Translator
 
 
 class QueueItemWidget(QFrame):
@@ -27,8 +28,11 @@ class QueueItemWidget(QFrame):
     open_file_requested = Signal(str)
     open_folder_requested = Signal(str)
 
-    def __init__(self, item: QueueItem) -> None:
+    def __init__(self, item: QueueItem, translator: Translator | None = None) -> None:
         super().__init__()
+        self._translator = translator or Translator()
+        self._item = item
+        self._batch_locked = False
         self._item_id = item.item_id
         self._details_expanded = False
         self.setObjectName("queueItem")
@@ -43,11 +47,9 @@ class QueueItemWidget(QFrame):
         self._filename.setObjectName("queueFilename")
         self._status = QLabel()
         self._status.setObjectName("queueStatus")
-        self._status.setAccessibleName("Conversion status")
+        self._status.setAccessibleName(self._translator.tr("row.status_accessible"))
         self._remove_button = QPushButton("×")
         self._remove_button.setObjectName("removeButton")
-        self._remove_button.setToolTip("Remove from queue")
-        self._remove_button.setAccessibleName("Remove from queue")
         self._remove_button.clicked.connect(self._request_remove)
         title_row.addWidget(self._filename, 1)
         title_row.addWidget(self._status)
@@ -63,30 +65,25 @@ class QueueItemWidget(QFrame):
         arrow.setObjectName("conversionArrow")
         self._format_combo = QComboBox()
         self._format_combo.setObjectName("itemFormatCombo")
-        self._format_combo.setAccessibleName("Output format")
+        self._format_combo.setAccessibleName(self._translator.tr("row.output_format"))
         for index, output_format in enumerate(OUTPUT_FORMATS):
             self._format_combo.addItem(output_format.label, output_format.extension)
             self._format_combo.setItemData(
                 index,
-                output_format.description,
+                self._translator.tr(f"format.{output_format.extension}"),
                 Qt.ItemDataRole.ToolTipRole,
             )
         self._format_combo.currentIndexChanged.connect(self._format_changed)
-        self._retry = QPushButton("Retry")
+        self._retry = QPushButton()
         self._retry.setObjectName("compactButton")
-        self._retry.setAccessibleName("Retry conversion")
-        self._metadata = QPushButton("Metadata")
+        self._metadata = QPushButton()
         self._metadata.setObjectName("compactButton")
-        self._metadata.setAccessibleName("View or edit metadata")
-        self._details_button = QPushButton("Details")
+        self._details_button = QPushButton()
         self._details_button.setObjectName("compactButton")
-        self._details_button.setAccessibleName("Show conversion details")
-        self._open_file = QPushButton("Open file")
+        self._open_file = QPushButton()
         self._open_file.setObjectName("compactButton")
-        self._open_file.setAccessibleName("Open converted file")
-        self._open_folder = QPushButton("Open folder")
+        self._open_folder = QPushButton()
         self._open_folder.setObjectName("compactButton")
-        self._open_folder.setAccessibleName("Open output folder")
         self._retry.clicked.connect(self._request_retry)
         self._metadata.clicked.connect(self._request_metadata)
         self._details_button.clicked.connect(self._toggle_details)
@@ -114,7 +111,6 @@ class QueueItemWidget(QFrame):
         self._log_view = QPlainTextEdit()
         self._log_view.setObjectName("logView")
         self._log_view.setReadOnly(True)
-        self._log_view.setAccessibleName("Calibre conversion log")
         self._log_view.setMaximumBlockCount(1000)
         self._log_view.setMaximumHeight(130)
         self._log_view.hide()
@@ -128,12 +124,14 @@ class QueueItemWidget(QFrame):
         self.update_item(item)
 
     def update_item(self, item: QueueItem, *, batch_locked: bool = False) -> None:
+        self._item = item
+        self._batch_locked = batch_locked
         self._filename.setText(item.source_path.name)
         self._filename.setToolTip(str(item.source_path))
         try:
             size_text = format_file_size(item.source_path.stat().st_size)
         except OSError:
-            size_text = "Unavailable"
+            size_text = self._translator.tr("status.unavailable")
         input_label = get_input_format(item.input_format).label
         self._source_details.setText(f"{size_text}  •  {input_label}")
 
@@ -150,13 +148,16 @@ class QueueItemWidget(QFrame):
                 )
             )
 
-        status_text = item.status.value
+        status_text = self._translator.tr(f"status.{item.status.value.lower()}")
         if item.status is QueueStatus.CONVERTING and item.progress is not None:
-            status_text = f"Converting · {item.progress}%"
+            status_text = self._translator.tr(
+                "status.converting_progress", progress=item.progress
+            )
         self._status.setText(status_text)
         self._status.setAccessibleDescription(status_text)
         self._status.setProperty("queueState", item.status.value.lower())
-        self._status.setToolTip(item.error_message)
+        display_error = self._translator.user_message(item.error_message)
+        self._status.setToolTip(display_error)
         self._status.style().unpolish(self._status)
         self._status.style().polish(self._status)
 
@@ -181,16 +182,17 @@ class QueueItemWidget(QFrame):
         )
         self._retry.setVisible(retryable)
         self._retry.setEnabled(retryable and not batch_locked)
-        metadata_text = "Metadata"
+        metadata_text = self._translator.tr("row.metadata")
         if item.metadata_overrides.is_edited:
-            metadata_text = "Metadata · Edited"
+            metadata_text = self._translator.tr("row.metadata_edited")
         elif item.metadata_status is MetadataStatus.LOADING:
-            metadata_text = "Metadata · Loading…"
+            metadata_text = self._translator.tr("row.metadata_loading")
         elif item.metadata_status is MetadataStatus.UNAVAILABLE:
-            metadata_text = "Metadata · Unavailable"
+            metadata_text = self._translator.tr("row.metadata_unavailable")
         self._metadata.setText(metadata_text)
         self._metadata.setToolTip(
-            item.metadata_error or "View or edit metadata and the cover"
+            self._translator.user_message(item.metadata_error)
+            or self._translator.tr("row.metadata_tooltip")
         )
         self._metadata.setEnabled(
             not batch_locked and item.metadata_status is not MetadataStatus.LOADING
@@ -198,17 +200,44 @@ class QueueItemWidget(QFrame):
         self._open_file.setVisible(completed)
         self._open_folder.setVisible(completed)
 
-        self._error.setText(item.error_message)
-        self._error.setToolTip(item.error_message)
+        self._error.setText(display_error)
+        self._error.setToolTip(display_error)
         self._error.setVisible(retryable and bool(item.error_message))
 
-        detail_text = item.log or item.error_message or "No Calibre output captured."
+        detail_text = item.log or display_error or self._translator.tr("row.no_log")
         if self._log_view.toPlainText() != detail_text:
             self._log_view.setPlainText(detail_text)
         self._log_view.setVisible(self._details_expanded)
+        self._retranslate_controls()
+
+    def set_translator(self, translator: Translator) -> None:
+        self._translator = translator
+        for index, output_format in enumerate(OUTPUT_FORMATS):
+            self._format_combo.setItemData(
+                index,
+                self._translator.tr(f"format.{output_format.extension}"),
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self.update_item(self._item, batch_locked=self._batch_locked)
+
+    def _retranslate_controls(self) -> None:
+        tr = self._translator.tr
+        self._status.setAccessibleName(tr("row.status_accessible"))
+        self._remove_button.setToolTip(tr("row.remove"))
+        self._remove_button.setAccessibleName(tr("row.remove"))
+        self._format_combo.setAccessibleName(tr("row.output_format"))
+        self._retry.setText(tr("row.retry"))
+        self._retry.setAccessibleName(tr("row.retry_accessible"))
+        self._metadata.setAccessibleName(tr("row.metadata_accessible"))
         self._details_button.setText(
-            "Hide details" if self._details_expanded else "Details"
+            tr("row.hide_details" if self._details_expanded else "row.details")
         )
+        self._details_button.setAccessibleName(tr("row.details_accessible"))
+        self._open_file.setText(tr("row.open_file"))
+        self._open_file.setAccessibleName(tr("row.open_file_accessible"))
+        self._open_folder.setText(tr("row.open_folder"))
+        self._open_folder.setAccessibleName(tr("row.open_folder_accessible"))
+        self._log_view.setAccessibleName(tr("row.log_accessible"))
 
     @Slot(int)
     def _format_changed(self, _index: int) -> None:
@@ -220,9 +249,7 @@ class QueueItemWidget(QFrame):
     def _toggle_details(self) -> None:
         self._details_expanded = not self._details_expanded
         self._log_view.setVisible(self._details_expanded)
-        self._details_button.setText(
-            "Hide details" if self._details_expanded else "Details"
-        )
+        self._retranslate_controls()
 
     @Slot()
     def _request_remove(self) -> None:

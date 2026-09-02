@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 from bookforge.core.metadata import BookMetadata, MetadataOverrides, MetadataStatus
 from bookforge.core.queue import QueueItem
+from bookforge.i18n import Translator
 from bookforge.ui.metadata_dialog import MetadataDialog
 from bookforge.ui.queue_item_widget import QueueItemWidget
 
@@ -135,6 +136,14 @@ class MetadataDialogTests(unittest.TestCase):
         )
         row.update_item(item)
         self.assertEqual(row._metadata.text(), "Metadata · Edited")
+
+    def test_dialog_uses_selected_language(self) -> None:
+        metadata = BookMetadata(title="Книга")
+        dialog = MetadataDialog(
+            "book.epub", metadata, metadata, translator=Translator("ru")
+        )
+        self.assertEqual(dialog.windowTitle(), "Изменение метаданных — book.epub")
+        self.assertEqual(dialog._replace_cover.text(), "Заменить обложку")
 
 
 if __name__ == "__main__":

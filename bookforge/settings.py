@@ -16,6 +16,8 @@ WINDOW_GEOMETRY_KEY = "window/geometry"
 OUTPUT_FOLDER_KEY = "conversion/outputFolder"
 GLOBAL_FORMAT_KEY = "conversion/globalFormat"
 OVERWRITE_POLICY_KEY = "conversion/overwritePolicy"
+LANGUAGE_KEY = "appearance/language"
+THEME_KEY = "appearance/theme"
 
 
 def geometry_is_visible(rect: QRect, screen_rects: Iterable[QRect]) -> bool:
@@ -76,6 +78,19 @@ class ApplicationSettings:
     def save_conversion_choices(self, output_format: str, policy: str) -> None:
         self.backend.setValue(GLOBAL_FORMAT_KEY, output_format)
         self.backend.setValue(OVERWRITE_POLICY_KEY, policy)
+        self.backend.sync()
+
+    def language(self, valid_languages: set[str], default: str = "en") -> str:
+        value = str(self.backend.value(LANGUAGE_KEY, default))
+        return value if value in valid_languages else default
+
+    def theme(self, valid_themes: set[str], default: str = "system") -> str:
+        value = str(self.backend.value(THEME_KEY, default))
+        return value if value in valid_themes else default
+
+    def save_appearance(self, language: str, theme: str) -> None:
+        self.backend.setValue(LANGUAGE_KEY, language)
+        self.backend.setValue(THEME_KEY, theme)
         self.backend.sync()
 
     @staticmethod

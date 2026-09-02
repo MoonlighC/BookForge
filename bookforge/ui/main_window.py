@@ -10,7 +10,9 @@ from threading import Event
 from PySide6.QtCore import QSettings, QThread, QThreadPool, QTimer, Qt, QUrl, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -50,6 +52,8 @@ from bookforge.core.metadata import (
 )
 from bookforge.resources import application_icon
 from bookforge.settings import ApplicationSettings
+from bookforge.i18n import LANGUAGES, Translator
+from bookforge.theme import THEMES, apply_theme
 from bookforge.ui.batch_worker import (
     BatchCancellation,
     BatchConversionWorker,
@@ -57,6 +61,7 @@ from bookforge.ui.batch_worker import (
 from bookforge.ui.drop_area import DropArea
 from bookforge.ui.metadata_dialog import MetadataDialog
 from bookforge.ui.metadata_worker import MetadataLoadTask
+from bookforge.ui.preferences_dialog import PreferencesDialog
 from bookforge.ui.queue_item_widget import QueueItemWidget
 
 
@@ -78,6 +83,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._converter = converter or ConverterService()
         self._settings = ApplicationSettings(settings)
+        self._translator = Translator(self._settings.language(set(LANGUAGES)))
+        self._theme_mode = self._settings.theme(THEMES)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, self._theme_mode)
+            app.styleHints().colorSchemeChanged.connect(
+                self._system_color_scheme_changed
+            )
         self._queue = ConversionQueue()
         self._metadata_service = metadata_service or MetadataService()
         self._metadata_pool = QThreadPool(self)
@@ -103,28 +116,41 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self._restore_settings()
+        self._retranslate_ui()
         self._show_calibre_state()
         self._update_queue_ui()
 
+    @Slot()
+    def _system_color_scheme_changed(self) -> None:
+        if self._theme_mode != "system":
+            return
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, self._theme_mode)
+
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
-        self._add_books_action = QAction("Add books…", self)
+        self._file_menu = self.menuBar().addMenu("")
+        self._add_books_action = QAction(self)
         self._add_books_action.setShortcut(QKeySequence("Ctrl+O"))
-        self._add_books_action.setStatusTip("Add one or more books to the queue")
         self._add_books_action.triggered.connect(self._browse_input)
-        self._exit_action = QAction("Exit", self)
+        self._exit_action = QAction(self)
         self._exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self._exit_action.triggered.connect(self.close)
-        file_menu.addAction(self._add_books_action)
-        file_menu.addSeparator()
-        file_menu.addAction(self._exit_action)
+        self._file_menu.addAction(self._add_books_action)
+        self._file_menu.addSeparator()
+        self._file_menu.addAction(self._exit_action)
 
-        help_menu = self.menuBar().addMenu("&Help")
-        self._about_action = QAction("About BookForge", self)
+        self._edit_menu = self.menuBar().addMenu("")
+        self._preferences_action = QAction(self)
+        self._preferences_action.triggered.connect(self._show_preferences)
+        self._edit_menu.addAction(self._preferences_action)
+
+        self._help_menu = self.menuBar().addMenu("")
+        self._about_action = QAction(self)
         self._about_action.triggered.connect(self._show_about)
-        help_menu.addAction(self._about_action)
+        self._help_menu.addAction(self._about_action)
 
-        self._convert_action = QAction("Convert all", self)
+        self._convert_action = QAction(self)
         self._convert_action.setShortcut(QKeySequence("Ctrl+Enter"))
         self._convert_action.triggered.connect(self._start_conversion)
         self.addAction(self._convert_action)
@@ -138,10 +164,10 @@ class MainWindow(QMainWindow):
 
         title = QLabel("BookForge")
         title.setObjectName("appTitle")
-        subtitle = QLabel("Simple e-book conversion for Kindle & more")
-        subtitle.setObjectName("subtitle")
+        self._subtitle = QLabel()
+        self._subtitle.setObjectName("subtitle")
         root.addWidget(title)
-        root.addWidget(subtitle)
+        root.addWidget(self._subtitle)
 
         self._warning_banner = QLabel()
         self._warning_banner.setObjectName("warningBanner")
@@ -149,19 +175,17 @@ class MainWindow(QMainWindow):
         self._warning_banner.hide()
         root.addWidget(self._warning_banner)
 
-        self._drop_area = DropArea()
+        self._drop_area = DropArea(self._translator)
         self._drop_area.browse_requested.connect(self._browse_input)
         self._drop_area.files_selected.connect(self._add_files)
         self._drop_area.file_rejected.connect(self._show_warning)
         root.addWidget(self._drop_area)
 
         queue_header = QHBoxLayout()
-        self._queue_heading = QLabel("Conversion queue")
+        self._queue_heading = QLabel()
         self._queue_heading.setObjectName("sectionTitle")
-        self._retry_failed_button = QPushButton("Retry failed")
-        self._clear_button = QPushButton("Clear queue")
-        self._retry_failed_button.setAccessibleName("Retry failed books")
-        self._clear_button.setAccessibleName("Clear conversion queue")
+        self._retry_failed_button = QPushButton()
+        self._clear_button = QPushButton()
         self._retry_failed_button.clicked.connect(self._retry_failed)
         self._clear_button.clicked.connect(self._clear_queue)
         queue_header.addWidget(self._queue_heading)
@@ -184,7 +208,7 @@ class MainWindow(QMainWindow):
         self._queue_layout.setContentsMargins(0, 0, 5, 0)
         self._queue_layout.setSpacing(8)
         self._queue_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._empty_queue = QLabel("No books queued yet")
+        self._empty_queue = QLabel()
         self._empty_queue.setObjectName("emptyQueue")
         self._empty_queue.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._queue_layout.addWidget(self._empty_queue)
@@ -198,8 +222,8 @@ class MainWindow(QMainWindow):
         controls_layout.setSpacing(11)
 
         formats_row = QHBoxLayout()
-        formats_label = QLabel("Set every book to")
-        formats_label.setObjectName("sectionLabel")
+        self._formats_label = QLabel()
+        self._formats_label.setObjectName("sectionLabel")
         self._set_all_combo = QComboBox()
         self._set_all_combo.setObjectName("globalFormatCombo")
         self._set_all_combo.setAccessibleName("Format for every book")
@@ -207,47 +231,36 @@ class MainWindow(QMainWindow):
             self._set_all_combo.addItem(output_format.label, output_format.extension)
             self._set_all_combo.setItemData(
                 index,
-                output_format.description,
+                self._translator.tr(f"format.{output_format.extension}"),
                 Qt.ItemDataRole.ToolTipRole,
             )
         self._set_all_combo.currentIndexChanged.connect(
             self._update_global_format_tooltip
         )
-        self._apply_all_button = QPushButton("Apply")
+        self._apply_all_button = QPushButton()
         self._apply_all_button.clicked.connect(self._apply_format_to_all)
-        overwrite_label = QLabel("Existing files")
-        overwrite_label.setObjectName("sectionLabel")
+        self._overwrite_label = QLabel()
+        self._overwrite_label.setObjectName("sectionLabel")
         self._overwrite_combo = QComboBox()
         self._overwrite_combo.setObjectName("overwritePolicyCombo")
         self._overwrite_combo.setAccessibleName("Existing files policy")
-        policy_hints = {
-            OverwritePolicy.ASK: "Ask before replacing each existing output",
-            OverwritePolicy.REPLACE_ALL: "Replace existing outputs in this batch",
-            OverwritePolicy.SKIP_ALL: "Skip books whose outputs already exist",
-        }
         for index, policy in enumerate(OverwritePolicy):
-            self._overwrite_combo.addItem(policy.value, policy.value)
-            self._overwrite_combo.setItemData(
-                index, policy_hints[policy], Qt.ItemDataRole.ToolTipRole
-            )
-        formats_row.addWidget(formats_label)
+            self._overwrite_combo.addItem("", policy.value)
+        formats_row.addWidget(self._formats_label)
         formats_row.addWidget(self._set_all_combo)
         formats_row.addWidget(self._apply_all_button)
         formats_row.addStretch(1)
-        formats_row.addWidget(overwrite_label)
+        formats_row.addWidget(self._overwrite_label)
         formats_row.addWidget(self._overwrite_combo)
 
         folder_row = QHBoxLayout()
-        folder_label = QLabel("Output folder")
-        folder_label.setObjectName("sectionLabel")
+        self._folder_label = QLabel()
+        self._folder_label.setObjectName("sectionLabel")
         self._output_folder = QLineEdit()
         self._output_folder.setReadOnly(True)
-        self._output_folder.setAccessibleName("Output folder")
-        self._output_folder.setPlaceholderText("Add a book to choose its folder")
-        self._browse_folder_button = QPushButton("Browse")
-        self._browse_folder_button.setAccessibleName("Browse for output folder")
+        self._browse_folder_button = QPushButton()
         self._browse_folder_button.clicked.connect(self._browse_output_folder)
-        folder_row.addWidget(folder_label)
+        folder_row.addWidget(self._folder_label)
         folder_row.addWidget(self._output_folder, 1)
         folder_row.addWidget(self._browse_folder_button)
 
@@ -262,15 +275,14 @@ class MainWindow(QMainWindow):
         root.addWidget(self._progress)
 
         footer = QHBoxLayout()
-        self._summary = QLabel("0 books • Ready")
+        self._summary = QLabel()
         self._summary.setObjectName("statusLabel")
-        self._cancel_current_button = QPushButton("Cancel current")
+        self._cancel_current_button = QPushButton()
         self._cancel_current_button.setObjectName("cancelButton")
-        self._cancel_batch_button = QPushButton("Cancel batch")
+        self._cancel_batch_button = QPushButton()
         self._cancel_batch_button.setObjectName("dangerButton")
-        self._convert_button = QPushButton("Convert all")
+        self._convert_button = QPushButton()
         self._convert_button.setObjectName("primaryButton")
-        self._convert_button.setAccessibleName("Convert all ready books")
         self._cancel_current_button.clicked.connect(self._cancel_current)
         self._cancel_batch_button.clicked.connect(self._cancel_batch)
         self._convert_button.clicked.connect(self._start_conversion)
@@ -287,7 +299,9 @@ class MainWindow(QMainWindow):
         description = self._set_all_combo.itemData(
             index, Qt.ItemDataRole.ToolTipRole
         )
-        self._set_all_combo.setToolTip(str(description or "Choose an output format"))
+        self._set_all_combo.setToolTip(
+            str(description or self._translator.tr("format.choose"))
+        )
 
     def _restore_settings(self) -> None:
         valid_formats = {output_format.extension for output_format in OUTPUT_FORMATS}
@@ -323,16 +337,108 @@ class MainWindow(QMainWindow):
         self._settings.save_conversion_choices(
             str(self._set_all_combo.currentData()), policy_value
         )
+        self._settings.save_appearance(self._translator.language, self._theme_mode)
+
+    @Slot()
+    def _show_preferences(self) -> None:
+        dialog = PreferencesDialog(
+            self._translator,
+            self._translator.language,
+            self._theme_mode,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._translator.set_language(dialog.selected_language)
+        self._theme_mode = dialog.selected_theme
+        self._settings.save_appearance(self._translator.language, self._theme_mode)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, self._theme_mode)
+        self._retranslate_ui()
+
+    def _retranslate_ui(self) -> None:
+        tr = self._translator.tr
+        self._file_menu.setTitle(tr("menu.file"))
+        self._edit_menu.setTitle(tr("menu.edit"))
+        self._help_menu.setTitle(tr("menu.help"))
+        self._add_books_action.setText(tr("menu.add_books"))
+        self._add_books_action.setStatusTip(tr("tip.add_books"))
+        self._exit_action.setText(tr("menu.exit"))
+        self._preferences_action.setText(tr("menu.preferences"))
+        self._about_action.setText(tr("menu.about"))
+        self._convert_action.setText(tr("controls.convert_all"))
+        self._subtitle.setText(tr("subtitle"))
+        self._drop_area.retranslate(self._translator)
+        self._empty_queue.setText(tr("queue.empty"))
+        self._retry_failed_button.setText(tr("queue.retry_failed"))
+        self._retry_failed_button.setAccessibleName(
+            tr("queue.retry_failed_accessible")
+        )
+        self._clear_button.setText(tr("queue.clear"))
+        self._clear_button.setAccessibleName(tr("queue.clear_accessible"))
+        self._formats_label.setText(tr("controls.set_all"))
+        self._set_all_combo.setAccessibleName(tr("controls.format_accessible"))
+        self._apply_all_button.setText(tr("controls.apply"))
+        self._overwrite_label.setText(tr("controls.existing"))
+        self._overwrite_combo.setAccessibleName(tr("controls.policy_accessible"))
+        policy_keys = {
+            OverwritePolicy.ASK: ("policy.ask", "policy.ask_hint"),
+            OverwritePolicy.REPLACE_ALL: (
+                "policy.replace_all",
+                "policy.replace_hint",
+            ),
+            OverwritePolicy.SKIP_ALL: ("policy.skip_all", "policy.skip_hint"),
+        }
+        for index, policy in enumerate(OverwritePolicy):
+            label_key, hint_key = policy_keys[policy]
+            self._overwrite_combo.setItemText(index, tr(label_key))
+            self._overwrite_combo.setItemData(
+                index, tr(hint_key), Qt.ItemDataRole.ToolTipRole
+            )
+        for index, output_format in enumerate(OUTPUT_FORMATS):
+            self._set_all_combo.setItemData(
+                index,
+                tr(f"format.{output_format.extension}"),
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._folder_label.setText(tr("controls.output_folder"))
+        self._output_folder.setAccessibleName(tr("controls.output_accessible"))
+        self._output_folder.setPlaceholderText(tr("controls.output_placeholder"))
+        self._browse_folder_button.setText(tr("controls.browse"))
+        self._browse_folder_button.setAccessibleName(
+            tr("controls.browse_accessible")
+        )
+        self._cancel_current_button.setText(tr("controls.cancel_current"))
+        self._cancel_batch_button.setText(tr("controls.cancel_batch"))
+        self._convert_button.setText(tr("controls.convert_all"))
+        self._convert_button.setAccessibleName(tr("controls.convert_accessible"))
+        for row in self._row_widgets.values():
+            row.set_translator(self._translator)
+        self._update_global_format_tooltip()
+        self._show_calibre_state()
+        self._update_queue_ui()
+        if self._batch_active:
+            if self._batch_cancel_requested:
+                self._summary.setText(tr("summary.cancelling_batch"))
+            elif self._current_position:
+                self._summary.setText(
+                    tr(
+                        "summary.converting",
+                        position=self._current_position,
+                        total=self._current_total,
+                    )
+                )
 
     @Slot()
     def _show_about(self) -> None:
+        tr = self._translator.tr
         QMessageBox.about(
             self,
-            "About BookForge",
-            f"<b>BookForge</b><br>Version {__version__}<br><br>"
-            "A simple personal desktop e-book converter built with Python, "
-            "PySide6, and Calibre.<br><br>"
-            "Calibre is a separate dependency.",
+            tr("about.title"),
+            f'<b>BookForge</b><br>{tr("about.version", version=__version__)}'
+            f'<br><br>{tr("about.description")}<br>{tr("about.built_with")}'
+            f'<br><br>{tr("about.calibre")}',
         )
 
     def _show_calibre_state(self) -> None:
@@ -343,10 +449,7 @@ class MainWindow(QMainWindow):
                 self._warning_banner.setToolTip(str(executable))
             return
 
-        self._warning_banner.setText(
-            "Calibre was not found. BookForge uses Calibre's ebook-convert engine. "
-            "Install Calibre before converting books."
-        )
+        self._warning_banner.setText(self._translator.tr("calibre.missing_banner"))
         self._warning_banner.show()
 
     @Slot()
@@ -356,9 +459,10 @@ class MainWindow(QMainWindow):
         start_folder = queued_items[0].source_path.parent if queued_items else Path.home()
         filenames, _ = QFileDialog.getOpenFileNames(
             self,
-            "Add books",
+            self._translator.tr("dialog.add_books"),
             str(start_folder),
-            f"Supported books ({patterns});;All files (*.*)",
+            f'{self._translator.tr("dialog.supported_books")} ({patterns});;'
+            f'{self._translator.tr("dialog.all_files")} (*.*)',
         )
         if filenames:
             self._add_files([Path(filename) for filename in filenames])
@@ -380,22 +484,28 @@ class MainWindow(QMainWindow):
 
         notices: list[str] = []
         if result.duplicate_count:
-            noun = "file was" if result.duplicate_count == 1 else "files were"
-            notices.append(
-                f"{result.duplicate_count} {noun} already in the queue and skipped."
+            key = (
+                "warning.duplicates_one"
+                if result.duplicate_count == 1
+                else "warning.duplicates_many"
             )
+            notices.append(self._translator.tr(key, count=result.duplicate_count))
         if result.rejected:
             first = result.rejected[0]
             notices.append(
-                f"{len(result.rejected)} unsupported or unavailable file(s) were "
-                f"skipped. {first.path.name}: {first.reason}"
+                self._translator.tr(
+                    "warning.rejected",
+                    count=len(result.rejected),
+                    filename=first.path.name,
+                    reason=self._translator.user_message(first.reason),
+                )
             )
         if notices:
             self._show_warning("\n\n".join(notices))
         self._update_queue_ui()
 
     def _add_queue_row(self, item: QueueItem) -> None:
-        row = QueueItemWidget(item)
+        row = QueueItemWidget(item, self._translator)
         row.output_format_changed.connect(self._set_item_output_format)
         row.remove_requested.connect(self._remove_item)
         row.retry_requested.connect(self._retry_item)
@@ -481,7 +591,13 @@ class MainWindow(QMainWindow):
             return
         original = item.original_metadata or BookMetadata()
         current = item.effective_metadata
-        dialog = MetadataDialog(item.source_path.name, original, current, self)
+        dialog = MetadataDialog(
+            item.source_path.name,
+            original,
+            current,
+            self,
+            self._translator,
+        )
         if dialog.exec() != MetadataDialog.DialogCode.Accepted:
             return
         edited = dialog.saved_metadata
@@ -573,7 +689,7 @@ class MainWindow(QMainWindow):
             return
         start_folder = self._output_folder.text() or str(Path.home())
         folder = QFileDialog.getExistingDirectory(
-            self, "Select output folder", start_folder
+            self, self._translator.tr("dialog.output_folder"), start_folder
         )
         if folder:
             self._output_folder.setText(folder)
@@ -588,15 +704,13 @@ class MainWindow(QMainWindow):
             item for item in self._queue.items if item.status is QueueStatus.READY
         )
         if not candidates:
-            self._show_warning("There are no ready books to convert.")
+            self._show_warning(self._translator.tr("warning.no_ready"))
             return
         if not self._converter.calibre_available:
-            self._show_warning(
-                "Calibre was not found. Install Calibre before converting books."
-            )
+            self._show_warning(self._translator.tr("warning.calibre_missing"))
             return
         if not self._output_folder.text():
-            self._show_warning("Select an output folder before converting.")
+            self._show_warning(self._translator.tr("warning.select_output"))
             return
 
         for item in candidates:
@@ -637,7 +751,12 @@ class MainWindow(QMainWindow):
         self._progress.setFormat("")
         self._progress.show()
         self._set_batch_locked(True)
-        self._summary.setText(f"Preparing {len(preflight.jobs)} book(s)")
+        self._summary.setText(
+            self._translator.tr(
+                "summary.preparing",
+                books=self._translator.books(len(preflight.jobs)),
+            )
+        )
 
         self._thread = QThread(self)
         self._cancellation = BatchCancellation()
@@ -681,17 +800,20 @@ class MainWindow(QMainWindow):
     def _ask_overwrite(self, output_path: Path) -> OverwriteDecision:
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Output file exists")
+        dialog.setWindowTitle(self._translator.tr("dialog.output_exists"))
         dialog.setText(output_path.name)
         dialog.setInformativeText(
-            "Choose whether to replace this output, skip the book, or stop the batch."
+            self._translator.tr("dialog.output_exists_info")
         )
         replace_button = dialog.addButton(
-            "Replace", QMessageBox.ButtonRole.AcceptRole
+            self._translator.tr("dialog.replace"), QMessageBox.ButtonRole.AcceptRole
         )
-        skip_button = dialog.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
+        skip_button = dialog.addButton(
+            self._translator.tr("dialog.skip"), QMessageBox.ButtonRole.RejectRole
+        )
         cancel_button = dialog.addButton(
-            "Cancel batch", QMessageBox.ButtonRole.DestructiveRole
+            self._translator.tr("dialog.cancel_batch"),
+            QMessageBox.ButtonRole.DestructiveRole,
         )
         dialog.setDefaultButton(skip_button)
         dialog.exec()
@@ -716,7 +838,11 @@ class MainWindow(QMainWindow):
         self._progress.setFormat("")
         self._cancel_current_button.setEnabled(not self._batch_cancel_requested)
         self._sync_row(item_id)
-        self._summary.setText(f"Converting {position} of {total}")
+        self._summary.setText(
+            self._translator.tr(
+                "summary.converting", position=position, total=total
+            )
+        )
 
     @Slot(str, int)
     def _item_progress(self, item_id: str, progress: int) -> None:
@@ -726,9 +852,14 @@ class MainWindow(QMainWindow):
         item.progress = progress
         self._progress.setRange(0, 100)
         self._progress.setValue(progress)
-        self._progress.setFormat("Current book · %p%")
+        self._progress.setFormat(self._translator.tr("status.current_book"))
         self._summary.setText(
-            f"Converting {self._current_position} of {self._current_total} · {progress}%"
+            self._translator.tr(
+                "summary.converting_progress",
+                position=self._current_position,
+                total=self._current_total,
+                progress=progress,
+            )
         )
         self._sync_row(item_id)
 
@@ -789,7 +920,7 @@ class MainWindow(QMainWindow):
             return
         self._cancellation.cancel_current()
         self._cancel_current_button.setDisabled(True)
-        self._summary.setText("Cancelling current conversion...")
+        self._summary.setText(self._translator.tr("summary.cancelling_current"))
 
     @Slot()
     def _cancel_batch(self) -> None:
@@ -799,7 +930,7 @@ class MainWindow(QMainWindow):
         self._cancellation.cancel_batch()
         self._cancel_current_button.setDisabled(True)
         self._cancel_batch_button.setDisabled(True)
-        self._summary.setText("Cancelling batch...")
+        self._summary.setText(self._translator.tr("summary.cancelling_batch"))
 
     @Slot()
     def _thread_finished(self) -> None:
@@ -841,9 +972,11 @@ class MainWindow(QMainWindow):
 
     def _update_queue_ui(self) -> None:
         count = len(self._queue)
-        self._queue_heading.setText(f"Conversion queue  ·  {count}")
+        self._queue_heading.setText(
+            self._translator.tr("queue.heading", count=count)
+        )
         self._empty_queue.setVisible(count == 0)
-        self._queue_scroll.setVisible(count > 0)
+        self._queue_scroll.setVisible(True)
         self._drop_area.set_compact(count > 0)
 
         has_ready = any(item.status is QueueStatus.READY for item in self._queue.items)
@@ -879,22 +1012,25 @@ class MainWindow(QMainWindow):
         items = self._queue.items
         count = len(items)
         if count == 0:
-            return "0 books • Ready"
+            return self._translator.tr(
+                "summary.ready", books=self._translator.books(0)
+            )
         completed = sum(item.status is QueueStatus.COMPLETED for item in items)
         if completed == count:
-            noun = "book" if count == 1 else "books"
-            return f"{count} {noun} converted successfully"
+            return self._translator.tr(
+                "summary.success", books=self._translator.books(count)
+            )
 
         labels = (
-            (QueueStatus.COMPLETED, "completed"),
-            (QueueStatus.FAILED, "failed"),
-            (QueueStatus.CANCELLED, "cancelled"),
-            (QueueStatus.SKIPPED, "skipped"),
-            (QueueStatus.READY, "ready"),
-            (QueueStatus.WAITING, "waiting"),
+            (QueueStatus.COMPLETED, "summary.completed"),
+            (QueueStatus.FAILED, "summary.failed"),
+            (QueueStatus.CANCELLED, "summary.cancelled"),
+            (QueueStatus.SKIPPED, "summary.skipped"),
+            (QueueStatus.READY, "summary.ready_lower"),
+            (QueueStatus.WAITING, "summary.waiting"),
         )
         parts = [
-            f"{amount} {label}"
+            f"{amount} {self._translator.tr(label)}"
             for status, label in labels
             if (amount := sum(item.status is status for item in items))
         ]
@@ -904,7 +1040,7 @@ class MainWindow(QMainWindow):
     def _open_result_file(self, item_id: str) -> None:
         item = self._queue.get(item_id)
         if item is None or item.result_path is None or not item.result_path.is_file():
-            self._show_warning("The converted file is no longer available.")
+            self._show_warning(self._translator.tr("warning.converted_missing"))
             return
         self._open_local_path(item.result_path, "file")
 
@@ -916,7 +1052,7 @@ class MainWindow(QMainWindow):
             or item.result_path is None
             or not item.result_path.parent.is_dir()
         ):
-            self._show_warning("The output folder is no longer available.")
+            self._show_warning(self._translator.tr("warning.folder_missing"))
             return
         self._open_local_path(item.result_path.parent, "folder")
 
@@ -927,7 +1063,12 @@ class MainWindow(QMainWindow):
             LOGGER.exception("Could not open result %s: %s", item_name, path)
             opened = False
         if not opened:
-            self._show_warning(f"BookForge could not open the {item_name}.")
+            self._show_warning(
+                self._translator.tr(
+                    "warning.open_failed",
+                    item=self._translator.tr(f"warning.item_{item_name}"),
+                )
+            )
 
     def _show_warning(self, message: str) -> None:
         QMessageBox.warning(self, "BookForge", message)
@@ -936,8 +1077,8 @@ class MainWindow(QMainWindow):
         if self._thread is not None and self._thread.isRunning():
             answer = QMessageBox.question(
                 self,
-                "Conversion in progress",
-                "A conversion is still running.\n\nCancel the batch and exit?",
+                self._translator.tr("dialog.conversion_running"),
+                self._translator.tr("dialog.conversion_running_text"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )

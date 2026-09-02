@@ -56,7 +56,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(self.app.applicationName(), "BookForge")
         self.assertEqual(self.app.applicationDisplayName(), "BookForge")
         self.assertEqual(self.app.organizationName(), "BookForge")
-        self.assertEqual(self.app.applicationVersion(), "0.9.0")
+        self.assertEqual(self.app.applicationVersion(), "0.10.0")
         self.assertFalse(application_icon().isNull())
 
     def test_resource_path_uses_pyinstaller_bundle_root(self) -> None:
@@ -114,6 +114,18 @@ class ApplicationTests(unittest.TestCase):
                 self.assertEqual(window._output_folder.text(), "")
             finally:
                 window.close()
+
+    def test_settings_persist_language_and_theme(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            settings = QSettings(
+                str(Path(folder) / "bookforge.ini"), QSettings.Format.IniFormat
+            )
+            preferences = ApplicationSettings(settings)
+            preferences.save_appearance("ru", "dark")
+            self.assertEqual(preferences.language({"en", "de", "ru"}), "ru")
+            self.assertEqual(
+                preferences.theme({"system", "light", "dark"}), "dark"
+            )
 
     def test_offscreen_geometry_is_rejected(self) -> None:
         screens = (QRect(0, 0, 1920, 1080), QRect(1920, 0, 1920, 1080))

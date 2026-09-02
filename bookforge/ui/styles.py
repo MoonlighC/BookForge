@@ -26,6 +26,24 @@ QMenuBar::item {
     padding: 5px 9px;
 }
 
+QMenu {
+    background: #ffffff;
+    border: 1px solid #dfe4ec;
+    padding: 5px;
+}
+
+QMenu::item {
+    background: transparent;
+    border-radius: 5px;
+    padding: 7px 24px 7px 10px;
+}
+
+QMenu::separator {
+    background: #e4e7ec;
+    height: 1px;
+    margin: 4px 8px;
+}
+
 QMenuBar::item:selected,
 QMenu::item:selected {
     background: #edf3ff;
@@ -44,6 +62,7 @@ QLabel#subtitle {
 }
 
 QLabel#sectionLabel {
+    background: transparent;
     color: #344054;
     font-size: 13px;
     font-weight: 600;
@@ -407,6 +426,19 @@ QLabel#statusLabel {
     font-size: 13px;
 }
 
+QPushButton:pressed {
+    background: #edf3ff;
+    border-color: #4f7ee8;
+}
+
+QPushButton:disabled,
+QComboBox:disabled,
+QLineEdit:disabled {
+    background: #eef2f7;
+    border-color: #dfe4ec;
+    color: #98a2b3;
+}
+
 QToolTip {
     background: #ffffff;
     border: 1px solid #c7ced8;
@@ -445,6 +477,40 @@ QLabel#resultLocation {
 """
 
 
-def application_stylesheet() -> str:
-    arrow = resource_path("assets/chevron-down.svg").as_posix()
-    return APP_STYLESHEET.replace("__BOOKFORGE_COMBO_ARROW__", arrow)
+DARK_COLOR_MAP = {
+    "#f5f7fb": "#111827", "#182230": "#e5e7eb", "#ffffff": "#182230",
+    "#e4e7ec": "#354154", "#edf3ff": "#263b62", "#244f9f": "#a9c4ff",
+    "#101828": "#f8fafc", "#667085": "#aab4c3", "#344054": "#d7dee8",
+    "#1d2939": "#f1f5f9", "#dfe4ec": "#354154", "#fff8e7": "#3c3020",
+    "#f4d58d": "#765c26", "#7a4f01": "#ffd781", "#b8c2d3": "#64748b",
+    "#f1f6ff": "#20304b", "#4f7ee8": "#6f98f5", "#c2cad6": "#64748b",
+    "#98a2b3": "#8390a3", "#eef2f7": "#263244", "#475467": "#c0cad8",
+    "#fff5d9": "#3c3420", "#815b00": "#f5d06f", "#e9f0ff": "#243657",
+    "#2859bd": "#9ab9ff", "#e8f7ef": "#1d3a31", "#18794e": "#7dd3ad",
+    "#ffebeb": "#452829", "#b42318": "#ff9b93", "#fff4e5": "#423122",
+    "#854a0e": "#ffc078", "#4f6f9f": "#9eb9e5", "#d0d5dd": "#526074",
+    "#f8fafc": "#202b3b", "#c7ced8": "#526074", "#e8f0ff": "#2b436c",
+    "#3568d4": "#517fe2", "#f9fafb": "#293547", "#aebfe4": "#43516a",
+    "#feecec": "#48282b", "#f0b64d": "#c9913c", "#d79b2c": "#dea746",
+    "#e5a4a0": "#9b5d5c", "#fff0ef": "#442729", "#d46b63": "#b86965",
+    "#e9edf3": "#293547", "#5a80d8": "#7197ed", "#e1e6ed": "#354154",
+}
+
+
+def application_stylesheet(theme: str = "light") -> str:
+    arrow_asset = (
+        "assets/chevron-down-dark.svg"
+        if theme == "dark"
+        else "assets/chevron-down.svg"
+    )
+    arrow = resource_path(arrow_asset).as_posix()
+    stylesheet = APP_STYLESHEET
+    if theme == "dark":
+        import re
+
+        stylesheet = re.sub(
+            r"#[0-9a-fA-F]{6}",
+            lambda match: DARK_COLOR_MAP.get(match.group(0).lower(), match.group(0)),
+            stylesheet,
+        )
+    return stylesheet.replace("__BOOKFORGE_COMBO_ARROW__", arrow)

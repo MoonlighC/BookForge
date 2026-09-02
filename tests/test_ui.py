@@ -10,11 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, QRect, QSettings, QUrl
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from bookforge.core.converter import ConversionResult, ConverterService
 from bookforge.core.metadata import MetadataStatus
 from bookforge.core.queue import QueueStatus
+from bookforge.theme import apply_theme
 from bookforge.ui.drop_area import DropArea
 from bookforge.ui.batch_worker import BatchCancellation
 from bookforge.ui.main_window import MainWindow
@@ -99,11 +100,12 @@ class MainWindowQueueTests(unittest.TestCase):
             self.window._show_about()
         message = about.call_args.args[2]
         self.assertIn("BookForge", message)
-        self.assertIn("Version 0.9.0", message)
+        self.assertIn("Version 0.10.0", message)
         self.assertIn("Calibre is a separate dependency", message)
 
     def test_actions_are_visible_only_when_relevant(self) -> None:
         self.assertTrue(self.window._clear_button.isHidden())
+        self.assertFalse(self.window._queue_scroll.isHidden())
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "Book.epub"
             source.write_bytes(b"book")
@@ -149,6 +151,77 @@ class MainWindowQueueTests(unittest.TestCase):
                     rect = QRect(origin, control.size())
                     self.assertTrue(central.rect().contains(rect), (width, control))
                 self.assertTrue(self.window._queue_scroll.isVisible())
+
+    def test_live_language_and_theme_changes_preserve_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Book.epub"
+            source.write_bytes(b"book")
+            self.window._add_files([source])
+            item = self.window._queue.items[0]
+            row = self.window._row_widgets[item.item_id]
+
+            self.window._translator.set_language("de")
+            self.window._theme_mode = "dark"
+            apply_theme(self.app, "dark")
+            self.window._retranslate_ui()
+            self.assertEqual(self.window._file_menu.title(), "&Datei")
+            self.assertEqual(row._status.text(), "Bereit")
+            self.assertEqual(self.window._overwrite_combo.currentData(), "Ask")
+            self.assertEqual(len(self.window._queue), 1)
+            self.assertEqual(self.app.property("bookforgeTheme"), "dark")
+
+            self.window._translator.set_language("ru")
+            self.window._retranslate_ui()
+            self.assertEqual(self.window._edit_menu.title(), "&Правка")
+            self.assertEqual(row._metadata.text(), "Метаданные · Недоступны")
+            self.assertEqual(len(self.window._queue), 1)
+
+    def test_preferences_save_applies_and_persists_appearance(self) -> None:
+        class AcceptedPreferences:
+            selected_language = "de"
+            selected_theme = "dark"
+
+            @staticmethod
+            def exec() -> QDialog.DialogCode:
+                return QDialog.DialogCode.Accepted
+
+        with patch(
+            "bookforge.ui.main_window.PreferencesDialog",
+            return_value=AcceptedPreferences(),
+        ):
+            self.window._show_preferences()
+
+        self.assertEqual(self.window._translator.language, "de")
+        self.assertEqual(self.window._file_menu.title(), "&Datei")
+        self.assertEqual(self.app.property("bookforgeTheme"), "dark")
+        self.assertEqual(
+            self.window._settings.language({"en", "de", "ru"}), "de"
+        )
+        self.assertEqual(
+            self.window._settings.theme({"system", "light", "dark"}), "dark"
+        )
+
+    def test_long_localized_controls_fit_supported_window_sizes(self) -> None:
+        self.window._translator.set_language("de")
+        self.window._retranslate_ui()
+        self.window.show()
+        for width, height in ((780, 620), (1100, 750), (1440, 900)):
+            self.window.resize(width, height)
+            self.app.processEvents()
+            central = self.window.centralWidget()
+            assert central is not None
+            for control in (
+                self.window._clear_button,
+                self.window._browse_folder_button,
+                self.window._convert_button,
+            ):
+                if not control.isVisible():
+                    continue
+                origin = control.mapTo(central, QPoint(0, 0))
+                self.assertTrue(
+                    central.rect().contains(QRect(origin, control.size())),
+                    (width, control.text()),
+                )
 
     def test_format_selectors_explain_the_kindle_friendly_option(self) -> None:
         azw3 = self.window._set_all_combo.findData("azw3")

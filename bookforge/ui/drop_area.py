@@ -9,6 +9,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 from bookforge.core.converter import INPUT_FORMATS
+from bookforge.i18n import Translator
 
 
 class DropArea(QFrame):
@@ -16,42 +17,40 @@ class DropArea(QFrame):
     browse_requested = Signal()
     file_rejected = Signal(str)
 
-    def __init__(self) -> None:
+    def __init__(self, translator: Translator | None = None) -> None:
         super().__init__()
+        self._translator = translator or Translator()
+        self._compact = False
         self.setObjectName("dropArea")
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAccessibleName("Add books")
-        self.setAccessibleDescription(
-            "Drop supported books here or click to open the file picker"
-        )
-        self.setToolTip("Add one or more supported books")
         self.setMinimumHeight(148)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(8)
 
-        icon = QLabel("＋")
-        icon.setObjectName("dropIcon")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon = QLabel("＋")
+        self._icon.setObjectName("dropIcon")
+        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._title = QLabel("Drop books here")
         self._title.setObjectName("dropTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        formats = QLabel(" • ".join(item.label for item in INPUT_FORMATS))
-        formats.setObjectName("dropFormats")
-        formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._formats = QLabel(" • ".join(item.label for item in INPUT_FORMATS))
+        self._formats.setObjectName("dropFormats")
+        self._formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        hint = QLabel("or click to browse")
-        hint.setObjectName("dropHint")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint = QLabel()
+        self._hint.setObjectName("dropHint")
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        layout.addWidget(icon)
+        layout.addWidget(self._icon)
         layout.addWidget(self._title)
-        layout.addWidget(formats)
-        layout.addWidget(hint)
+        layout.addWidget(self._formats)
+        layout.addWidget(self._hint)
+        self.retranslate()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._local_files_from_urls(event.mimeData().urls()):
@@ -70,7 +69,7 @@ class DropArea(QFrame):
         self._clear_drag_state()
         paths = self._local_files_from_urls(event.mimeData().urls())
         if not paths:
-            self.file_rejected.emit("Please drop one or more local book files.")
+            self.file_rejected.emit(self._translator.tr("drop.invalid"))
             event.ignore()
             return
         event.acceptProposedAction()
@@ -87,9 +86,21 @@ class DropArea(QFrame):
         self.style().polish(self)
 
     def set_compact(self, compact: bool) -> None:
+        self._compact = compact
         self.setMinimumHeight(88 if compact else 148)
         self.setMaximumHeight(96 if compact else 158)
-        self._title.setText("Drop more books here" if compact else "Drop books here")
+        self.retranslate()
+
+    def retranslate(self, translator: Translator | None = None) -> None:
+        if translator is not None:
+            self._translator = translator
+        self.setAccessibleName(self._translator.tr("drop.accessible"))
+        self.setAccessibleDescription(self._translator.tr("drop.description"))
+        self.setToolTip(self._translator.tr("drop.tooltip"))
+        self._title.setText(
+            self._translator.tr("drop.more" if self._compact else "drop.empty")
+        )
+        self._hint.setText(self._translator.tr("drop.browse"))
 
     @staticmethod
     def _local_files_from_urls(urls) -> list[Path]:  # type: ignore[no-untyped-def]

@@ -11,9 +11,10 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from bookforge import __version__
 from bookforge.resources import application_icon
-from bookforge.settings import APPLICATION_NAME, ORGANIZATION_NAME
+from bookforge.i18n import LANGUAGES, Translator
+from bookforge.settings import APPLICATION_NAME, ORGANIZATION_NAME, ApplicationSettings
+from bookforge.theme import THEMES, apply_theme
 from bookforge.ui.main_window import MainWindow
-from bookforge.ui.styles import application_stylesheet
 
 
 def configure_application(app: QApplication) -> None:
@@ -25,7 +26,8 @@ def configure_application(app: QApplication) -> None:
     app.setDesktopFileName("BookForge")
     app.setWindowIcon(application_icon())
     app.setStyle("Fusion")
-    app.setStyleSheet(application_stylesheet())
+    settings = ApplicationSettings()
+    apply_theme(app, settings.theme(THEMES))
 
 
 def configure_runtime_logging() -> Path | None:
@@ -59,11 +61,17 @@ def main() -> int:
         window.show()
     except Exception:
         logging.exception("BookForge could not start")
-        location = f"\n\nDetails were written to:\n{log_path}" if log_path else ""
+        settings = ApplicationSettings()
+        translator = Translator(settings.language(set(LANGUAGES)))
+        location = (
+            "\n\n" + translator.tr("startup.log", path=log_path)
+            if log_path
+            else ""
+        )
         QMessageBox.critical(
             None,
-            "BookForge could not start",
-            "BookForge encountered an unexpected startup error." + location,
+            translator.tr("startup.title"),
+            translator.tr("startup.message") + location,
         )
         return 1
     return app.exec()
