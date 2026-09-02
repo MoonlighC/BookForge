@@ -56,7 +56,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(self.app.applicationName(), "BookForge")
         self.assertEqual(self.app.applicationDisplayName(), "BookForge")
         self.assertEqual(self.app.organizationName(), "BookForge")
-        self.assertEqual(self.app.applicationVersion(), "0.10.0")
+        self.assertEqual(self.app.applicationVersion(), "1.0.0")
         self.assertFalse(application_icon().isNull())
 
     def test_resource_path_uses_pyinstaller_bundle_root(self) -> None:

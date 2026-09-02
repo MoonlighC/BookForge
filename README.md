@@ -6,14 +6,16 @@ BookForge is a local desktop application for converting e-books and documents be
 
 The application is built with Python and PySide6 for Windows 10 and Windows 11. A one-folder Windows build runs without a separate Python installation; Calibre remains an external dependency.
 
+BookForge performs conversions locally. It has no accounts, analytics, telemetry, cloud upload, or network conversion service.
+
 ## Features
 
 - Add multiple EPUB, AZW3, MOBI, FB2, DOCX, TXT, and PDF files through a multi-select file dialog or drag and drop.
 - Mix input formats in one in-memory conversion queue.
 - Choose AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT separately for every queued book.
 - Apply one output format to the whole queue, then adjust individual rows as needed.
-- Remember window geometry, a manually selected output folder, the global output format, and the existing-file policy between launches.
-- Use a small native File/Help menu with Ctrl+O, Ctrl+Q, Ctrl+Enter, and an About dialog.
+- Remember window geometry, output folder, format, overwrite policy, language, and theme between launches.
+- Use a native File/Edit/Help menu with Ctrl+O, Ctrl+Q, Ctrl+Enter, Preferences, and an About dialog.
 - Inspect and edit each book's title, authors, language, publisher, series, series index, and tags before conversion.
 - Preview an extracted cover or choose a validated JPG, JPEG, or PNG replacement for the converted output.
 - Keep metadata and cover edits per book, with a subtle **Metadata · Edited** indicator and Reset support.
@@ -34,7 +36,30 @@ The application is built with Python and PySide6 for Windows 10 and Windows 11. 
 - Switch the complete interface live between English, German, and Russian from **Edit → Preferences** without changing or clearing the queue.
 - Use the system color scheme or choose a persistent light or dark theme with an application-wide palette and matching controls.
 
-## Requirements
+## Install BookForge
+
+BookForge 1.0.0 is available in two Windows x64 forms:
+
+- **Installer:** `BookForge-Setup-1.0.0.exe`
+- **Portable:** `BookForge-1.0.0-Windows-x64.zip`
+
+Normal users do not need to install Python:
+
+1. Install [Calibre](https://calibre-ebook.com/download_windows) separately.
+2. Run the BookForge installer, or extract the portable ZIP to a writable folder.
+3. Launch `BookForge.exe`.
+4. Drop one or more books onto the drop area.
+5. Choose output formats and click **Convert all**.
+
+The installer uses a per-user installation and does not require administrator privileges. Its optional Desktop shortcut is disabled by default. The portable build stores no files beside the executable unless the user chooses that folder for converted output.
+
+BookForge 1.0.0 is not code-signed. Windows SmartScreen may warn about an unsigned first release; compare downloaded files with the published SHA-256 checksums.
+
+## Languages and themes
+
+The interface supports English, German, and Russian. Choose the interface language and System, Light, or Dark theme under **Edit → Preferences**. Both choices apply immediately and persist across launches.
+
+## Developer requirements
 
 Running from source requires:
 
@@ -45,7 +70,7 @@ Running from source requires:
 
 The packaged application does not require Python. Calibre must still be installed separately for conversion and metadata extraction.
 
-## Installation
+## Developer setup
 
 Open PowerShell in the project directory and create a virtual environment:
 
@@ -123,6 +148,14 @@ Run it with:
 ```
 
 `BookForge.spec` includes the Python runtime, PySide6 modules, application code, and BookForge assets. It creates a GUI executable without a console window. It deliberately does not include Calibre executables or DLLs.
+
+Build the installer after the portable build:
+
+```powershell
+.\installer\build_installer.ps1
+```
+
+This requires Inno Setup 6 installed for the current user. The generated installer is written to `dist\installer`.
 
 ## Calibre dependency
 
@@ -216,9 +249,9 @@ Examples include:
 
 BookForge does not artificially restrict input/output combinations. The practical availability and quality of a conversion depend on Calibre and the contents of the source file. PDF input can be less predictable because it is usually fixed-layout.
 
-## Development status
+## Release status
 
-BookForge 0.10.0 adds complete English, German, and Russian interface localization; live language switching; and persistent System, Light, and Dark themes. It also refines spacing, empty-queue presentation, focus and disabled states, menus, dialogs, and compact queue controls while retaining the native title bar and established BookForge style. Metadata, cover, batch, cancellation, progress, retry, overwrite, and transactional output behavior remain in place.
+BookForge 1.0.0 is the first stable release. It includes multi-format batch conversion, per-book formats, cancellation, progress, logs, retry, overwrite policies, metadata and cover editing, English/German/Russian localization, System/Light/Dark themes, persistent preferences, a standalone Windows distribution, and a per-user installer.
 
 A real sequential batch has been verified on Windows with a separately installed copy of Calibre, including generated TXT → EPUB and TXT → PDF fixtures with spaces and Cyrillic characters in their paths. A generated TXT → EPUB metadata smoke test also verified an overridden title, author, generated PNG cover, and byte-for-byte source preservation. Completed rows retain **Open file** and **Open folder** actions.
 
@@ -237,11 +270,14 @@ The other listed formats and input/output combinations are supported by the curr
 - Metadata extraction and output behavior depend on what Calibre supports for each input/output format. Metadata-poor formats can receive Calibre-inferred defaults, and Calibre may normalize values such as language codes.
 - BookForge passes changed, non-empty metadata through Calibre's supported conversion options. Reliably clearing an existing field to an empty value is not supported in this phase and Calibre may retain the source value.
 - Replacing a cover is supported; explicitly removing an existing cover is not exposed because it cannot be applied consistently across the supported formats.
-- The one-folder build has no installer, code signing, or automatic update mechanism yet.
-- The original development icon should receive a final visual review before 1.0.
+- Release binaries are not code-signed and have no automatic update mechanism.
 - There is no conversion history, library database, Send to Kindle integration, or device synchronization.
 - Calibre must be installed separately.
 
 ## DRM
 
 BookForge does not bypass or remove DRM. DRM-protected books are outside the scope of the application.
+
+## License
+
+BookForge's own source code is available under the [MIT License](LICENSE). Python, PySide6/Qt, Calibre, PyInstaller, and Inno Setup retain their respective licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md). Calibre is not bundled with BookForge.

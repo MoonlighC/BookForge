@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, QRect, QSettings, QUrl
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from bookforge.core.converter import ConversionResult, ConverterService
@@ -100,7 +100,7 @@ class MainWindowQueueTests(unittest.TestCase):
             self.window._show_about()
         message = about.call_args.args[2]
         self.assertIn("BookForge", message)
-        self.assertIn("Version 0.10.0", message)
+        self.assertIn("Version 1.0.0", message)
         self.assertIn("Calibre is a separate dependency", message)
 
     def test_actions_are_visible_only_when_relevant(self) -> None:
@@ -128,6 +128,30 @@ class MainWindowQueueTests(unittest.TestCase):
             self.assertTrue(row._retry.isHidden())
             self.assertFalse(row._open_file.isHidden())
             self.assertFalse(row._open_folder.isHidden())
+
+    def test_completed_result_opens_file_and_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "Book.epub"
+            result = root / "Book.azw3"
+            source.write_bytes(b"source")
+            result.write_bytes(b"result")
+            self.window._add_files([source])
+            item = self.window._queue.items[0]
+            item.result_path = result
+            item.status = QueueStatus.COMPLETED
+
+            with patch.object(
+                QDesktopServices, "openUrl", return_value=True
+            ) as open_url:
+                self.window._open_result_file(item.item_id)
+                self.window._open_result_folder(item.item_id)
+
+            self.assertEqual(open_url.call_count, 2)
+            self.assertEqual(
+                Path(open_url.call_args_list[0].args[0].toLocalFile()), result
+            )
+            self.assertEqual(Path(open_url.call_args_list[1].args[0].toLocalFile()), root)
 
     def test_key_controls_fit_supported_window_sizes(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -202,26 +226,27 @@ class MainWindowQueueTests(unittest.TestCase):
         )
 
     def test_long_localized_controls_fit_supported_window_sizes(self) -> None:
-        self.window._translator.set_language("de")
-        self.window._retranslate_ui()
         self.window.show()
-        for width, height in ((780, 620), (1100, 750), (1440, 900)):
-            self.window.resize(width, height)
-            self.app.processEvents()
-            central = self.window.centralWidget()
-            assert central is not None
-            for control in (
-                self.window._clear_button,
-                self.window._browse_folder_button,
-                self.window._convert_button,
-            ):
-                if not control.isVisible():
-                    continue
-                origin = control.mapTo(central, QPoint(0, 0))
-                self.assertTrue(
-                    central.rect().contains(QRect(origin, control.size())),
-                    (width, control.text()),
-                )
+        for language in ("en", "de", "ru"):
+            self.window._translator.set_language(language)
+            self.window._retranslate_ui()
+            for width, height in ((780, 620), (1100, 750), (1280, 800), (1440, 900)):
+                self.window.resize(width, height)
+                self.app.processEvents()
+                central = self.window.centralWidget()
+                assert central is not None
+                for control in (
+                    self.window._clear_button,
+                    self.window._browse_folder_button,
+                    self.window._convert_button,
+                ):
+                    if not control.isVisible():
+                        continue
+                    origin = control.mapTo(central, QPoint(0, 0))
+                    self.assertTrue(
+                        central.rect().contains(QRect(origin, control.size())),
+                        (language, width, control.text()),
+                    )
 
     def test_format_selectors_explain_the_kindle_friendly_option(self) -> None:
         azw3 = self.window._set_all_combo.findData("azw3")

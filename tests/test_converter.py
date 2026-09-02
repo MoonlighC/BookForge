@@ -5,7 +5,11 @@ import tempfile
 from threading import Event
 import unittest
 
-from bookforge.core.calibre import CalibreCancelledError, CalibreRunResult
+from bookforge.core.calibre import (
+    CalibreCancelledError,
+    CalibreProcessError,
+    CalibreRunResult,
+)
 from bookforge.core.converter import (
     ConversionCancelled,
     ConversionError,
@@ -43,6 +47,12 @@ class CancellingCalibreAdapter(WritingCalibreAdapter):
         raise CalibreCancelledError("cancelled", output="partial log")
 
 
+class FailingCalibreAdapter(WritingCalibreAdapter):
+    def run(self, input_path: Path, output_path: Path, **kwargs) -> CalibreRunResult:
+        output_path.write_bytes(b"partial")
+        raise CalibreProcessError("failed", output="conversion failed")
+
+
 class ConverterServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.adapter = WritingCalibreAdapter()
@@ -77,6 +87,18 @@ class ConverterServiceTests(unittest.TestCase):
             with self.assertRaises(ConversionCancelled) as raised:
                 converter.convert(source, root, "epub", cancel_event=Event())
             self.assertEqual(raised.exception.log, "partial log")
+            self.assertFalse((root / "Book.epub").exists())
+            self.assertFalse(list(root.glob("*.bookforge-*")))
+
+    def test_failed_conversion_does_not_publish_partial_output(self) -> None:
+        converter = ConverterService(FailingCalibreAdapter())  # type: ignore[arg-type]
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "Book.txt"
+            source.write_text("original", encoding="utf-8")
+            with self.assertRaises(ConversionError):
+                converter.convert(source, root, "epub")
+            self.assertEqual(source.read_text(encoding="utf-8"), "original")
             self.assertFalse((root / "Book.epub").exists())
             self.assertFalse(list(root.glob("*.bookforge-*")))
 

@@ -14,7 +14,12 @@ venv/
 
 build/
 dist/
+release/
+installer/Output/
+*.zip
+SHA256SUMS.txt
 *.spec
 !BookForge.spec
 *.egg-info/
 *.log
+work/
