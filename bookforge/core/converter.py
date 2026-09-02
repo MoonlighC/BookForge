@@ -28,7 +28,7 @@ class BookFormat:
 
 
 BOOK_FORMATS = (
-    BookFormat("azw3", "AZW3", "Recommended for Kindle", 1, 0),
+    BookFormat("azw3", "AZW3", "Kindle-friendly format", 1, 0),
     BookFormat("epub", "EPUB", "Widely supported e-book format", 0, 1),
     BookFormat("mobi", "MOBI", "Legacy Kindle-compatible format", 2, 2),
     BookFormat("pdf", "PDF", "Fixed-layout document", 6, 3),

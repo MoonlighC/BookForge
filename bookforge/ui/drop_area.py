@@ -21,7 +21,12 @@ class DropArea(QFrame):
         self.setObjectName("dropArea")
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(180)
+        self.setAccessibleName("Add books")
+        self.setAccessibleDescription(
+            "Drop supported books here or click to open the file picker"
+        )
+        self.setToolTip("Add one or more supported books")
+        self.setMinimumHeight(148)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -82,8 +87,8 @@ class DropArea(QFrame):
         self.style().polish(self)
 
     def set_compact(self, compact: bool) -> None:
-        self.setMinimumHeight(104 if compact else 180)
-        self.setMaximumHeight(116 if compact else 16777215)
+        self.setMinimumHeight(88 if compact else 148)
+        self.setMaximumHeight(96 if compact else 158)
         self._title.setText("Drop more books here" if compact else "Drop books here")
 
     @staticmethod

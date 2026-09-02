@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -43,9 +43,11 @@ class QueueItemWidget(QFrame):
         self._filename.setObjectName("queueFilename")
         self._status = QLabel()
         self._status.setObjectName("queueStatus")
+        self._status.setAccessibleName("Conversion status")
         self._remove_button = QPushButton("×")
         self._remove_button.setObjectName("removeButton")
         self._remove_button.setToolTip("Remove from queue")
+        self._remove_button.setAccessibleName("Remove from queue")
         self._remove_button.clicked.connect(self._request_remove)
         title_row.addWidget(self._filename, 1)
         title_row.addWidget(self._status)
@@ -53,25 +55,38 @@ class QueueItemWidget(QFrame):
 
         details_row = QHBoxLayout()
         details_row.setSpacing(9)
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(8)
         self._source_details = QLabel()
         self._source_details.setObjectName("queueDetails")
         arrow = QLabel("→")
         arrow.setObjectName("conversionArrow")
         self._format_combo = QComboBox()
         self._format_combo.setObjectName("itemFormatCombo")
-        for output_format in OUTPUT_FORMATS:
+        self._format_combo.setAccessibleName("Output format")
+        for index, output_format in enumerate(OUTPUT_FORMATS):
             self._format_combo.addItem(output_format.label, output_format.extension)
+            self._format_combo.setItemData(
+                index,
+                output_format.description,
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self._format_combo.currentIndexChanged.connect(self._format_changed)
         self._retry = QPushButton("Retry")
         self._retry.setObjectName("compactButton")
+        self._retry.setAccessibleName("Retry conversion")
         self._metadata = QPushButton("Metadata")
         self._metadata.setObjectName("compactButton")
+        self._metadata.setAccessibleName("View or edit metadata")
         self._details_button = QPushButton("Details")
         self._details_button.setObjectName("compactButton")
+        self._details_button.setAccessibleName("Show conversion details")
         self._open_file = QPushButton("Open file")
         self._open_file.setObjectName("compactButton")
+        self._open_file.setAccessibleName("Open converted file")
         self._open_folder = QPushButton("Open folder")
         self._open_folder.setObjectName("compactButton")
+        self._open_folder.setAccessibleName("Open output folder")
         self._retry.clicked.connect(self._request_retry)
         self._metadata.clicked.connect(self._request_metadata)
         self._details_button.clicked.connect(self._toggle_details)
@@ -81,11 +96,12 @@ class QueueItemWidget(QFrame):
         details_row.addWidget(arrow)
         details_row.addWidget(self._format_combo)
         details_row.addStretch(1)
-        details_row.addWidget(self._retry)
-        details_row.addWidget(self._metadata)
-        details_row.addWidget(self._details_button)
-        details_row.addWidget(self._open_file)
-        details_row.addWidget(self._open_folder)
+        actions_row.addStretch(1)
+        actions_row.addWidget(self._retry)
+        actions_row.addWidget(self._metadata)
+        actions_row.addWidget(self._details_button)
+        actions_row.addWidget(self._open_file)
+        actions_row.addWidget(self._open_folder)
 
         self._item_progress = QProgressBar()
         self._item_progress.setObjectName("itemProgress")
@@ -98,12 +114,14 @@ class QueueItemWidget(QFrame):
         self._log_view = QPlainTextEdit()
         self._log_view.setObjectName("logView")
         self._log_view.setReadOnly(True)
+        self._log_view.setAccessibleName("Calibre conversion log")
         self._log_view.setMaximumBlockCount(1000)
         self._log_view.setMaximumHeight(130)
         self._log_view.hide()
 
         root.addLayout(title_row)
         root.addLayout(details_row)
+        root.addLayout(actions_row)
         root.addWidget(self._item_progress)
         root.addWidget(self._error)
         root.addWidget(self._log_view)
@@ -123,11 +141,20 @@ class QueueItemWidget(QFrame):
         self._format_combo.blockSignals(True)
         self._format_combo.setCurrentIndex(index)
         self._format_combo.blockSignals(False)
+        if index >= 0:
+            self._format_combo.setToolTip(
+                str(
+                    self._format_combo.itemData(
+                        index, Qt.ItemDataRole.ToolTipRole
+                    )
+                )
+            )
 
         status_text = item.status.value
         if item.status is QueueStatus.CONVERTING and item.progress is not None:
             status_text = f"Converting · {item.progress}%"
         self._status.setText(status_text)
+        self._status.setAccessibleDescription(status_text)
         self._status.setProperty("queueState", item.status.value.lower())
         self._status.setToolTip(item.error_message)
         self._status.style().unpolish(self._status)
@@ -162,7 +189,9 @@ class QueueItemWidget(QFrame):
         elif item.metadata_status is MetadataStatus.UNAVAILABLE:
             metadata_text = "Metadata · Unavailable"
         self._metadata.setText(metadata_text)
-        self._metadata.setToolTip(item.metadata_error)
+        self._metadata.setToolTip(
+            item.metadata_error or "View or edit metadata and the cover"
+        )
         self._metadata.setEnabled(
             not batch_locked and item.metadata_status is not MetadataStatus.LOADING
         )

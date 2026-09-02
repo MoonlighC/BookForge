@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QPoint, QRect, QSettings, QUrl
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -48,15 +48,24 @@ class MainWindowQueueTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self) -> None:
+        self.settings_folder = tempfile.TemporaryDirectory()
+        settings = QSettings(
+            str(Path(self.settings_folder.name) / "bookforge.ini"),
+            QSettings.Format.IniFormat,
+        )
+        settings.clear()
         converter = ConverterService(AvailableAdapter())  # type: ignore[arg-type]
         self.metadata_service = UnavailableMetadataService()
         self.window = MainWindow(
-            converter, metadata_service=self.metadata_service  # type: ignore[arg-type]
+            converter,
+            metadata_service=self.metadata_service,  # type: ignore[arg-type]
+            settings=settings,
         )
         self.window._show_warning = lambda _message: None  # type: ignore[method-assign]
 
     def tearDown(self) -> None:
         self.window.close()
+        self.settings_folder.cleanup()
 
     def test_multiple_files_create_independent_scrollable_rows(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -79,6 +88,80 @@ class MainWindowQueueTests(unittest.TestCase):
             self.assertEqual(
                 self.window._drop_area._title.text(), "Drop more books here"
             )
+
+    def test_desktop_shortcuts_and_about_dialog(self) -> None:
+        self.assertEqual(self.window._add_books_action.shortcut().toString(), "Ctrl+O")
+        self.assertEqual(self.window._exit_action.shortcut().toString(), "Ctrl+Q")
+        self.assertEqual(
+            self.window._convert_action.shortcut().toString(), "Ctrl+Enter"
+        )
+        with patch.object(QMessageBox, "about") as about:
+            self.window._show_about()
+        message = about.call_args.args[2]
+        self.assertIn("BookForge", message)
+        self.assertIn("Version 0.9.0", message)
+        self.assertIn("Calibre is a separate dependency", message)
+
+    def test_actions_are_visible_only_when_relevant(self) -> None:
+        self.assertTrue(self.window._clear_button.isHidden())
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Book.epub"
+            source.write_bytes(b"book")
+            self.window._add_files([source])
+            item = self.window._queue.items[0]
+            row = self.window._row_widgets[item.item_id]
+
+            self.assertFalse(self.window._clear_button.isHidden())
+            self.assertTrue(row._retry.isHidden())
+            self.assertTrue(row._open_file.isHidden())
+            self.assertTrue(row._open_folder.isHidden())
+
+            item.status = QueueStatus.FAILED
+            row.update_item(item)
+            self.assertFalse(row._retry.isHidden())
+            self.assertTrue(row._open_file.isHidden())
+
+            item.status = QueueStatus.COMPLETED
+            row.update_item(item)
+            self.assertTrue(row._retry.isHidden())
+            self.assertFalse(row._open_file.isHidden())
+            self.assertFalse(row._open_folder.isHidden())
+
+    def test_key_controls_fit_supported_window_sizes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Book.epub"
+            source.write_bytes(b"book")
+            self.window._add_files([source])
+            self.window.show()
+            controls = (
+                self.window._set_all_combo,
+                self.window._overwrite_combo,
+                self.window._browse_folder_button,
+                self.window._convert_button,
+            )
+            for width, height in ((1100, 750), (1280, 800), (1440, 900)):
+                self.window.resize(width, height)
+                self.app.processEvents()
+                central = self.window.centralWidget()
+                assert central is not None
+                for control in controls:
+                    origin = control.mapTo(central, QPoint(0, 0))
+                    rect = QRect(origin, control.size())
+                    self.assertTrue(central.rect().contains(rect), (width, control))
+                self.assertTrue(self.window._queue_scroll.isVisible())
+
+    def test_format_selectors_explain_the_kindle_friendly_option(self) -> None:
+        azw3 = self.window._set_all_combo.findData("azw3")
+        self.window._set_all_combo.setCurrentIndex(azw3)
+        self.assertEqual(
+            self.window._set_all_combo.toolTip(), "Kindle-friendly format"
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Book.epub"
+            source.write_bytes(b"book")
+            self.window._add_files([source])
+            row = next(iter(self.window._row_widgets.values()))
+            self.assertEqual(row._format_combo.toolTip(), "Kindle-friendly format")
 
     def test_metadata_failure_does_not_block_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

@@ -4,7 +4,7 @@
 
 BookForge is a local desktop application for converting e-books and documents between common formats. It uses Calibre's `ebook-convert` command-line tool for conversion and `ebook-meta` for metadata and cover extraction.
 
-The application is built with Python and PySide6 and is currently developed primarily for Windows 10 and Windows 11.
+The application is built with Python and PySide6 for Windows 10 and Windows 11. A one-folder Windows build runs without a separate Python installation; Calibre remains an external dependency.
 
 ## Features
 
@@ -12,6 +12,8 @@ The application is built with Python and PySide6 and is currently developed prim
 - Mix input formats in one in-memory conversion queue.
 - Choose AZW3, EPUB, MOBI, PDF, FB2, DOCX, or TXT separately for every queued book.
 - Apply one output format to the whole queue, then adjust individual rows as needed.
+- Remember window geometry, a manually selected output folder, the global output format, and the existing-file policy between launches.
+- Use a small native File/Help menu with Ctrl+O, Ctrl+Q, Ctrl+Enter, and an About dialog.
 - Inspect and edit each book's title, authors, language, publisher, series, series index, and tags before conversion.
 - Preview an extracted cover or choose a validated JPG, JPEG, or PNG replacement for the converted output.
 - Keep metadata and cover edits per book, with a subtle **Metadata · Edited** indicator and Reset support.
@@ -32,10 +34,14 @@ The application is built with Python and PySide6 and is currently developed prim
 
 ## Requirements
 
+Running from source requires:
+
 - Windows 10 or Windows 11
 - Python 3.12 or later
 - [Calibre](https://calibre-ebook.com/) installed separately, with `ebook-convert` and `ebook-meta` available
 - PySide6 Essentials, installed from `requirements.txt`
+
+The packaged application does not require Python. Calibre must still be installed separately for conversion and metadata extraction.
 
 ## Installation
 
@@ -93,6 +99,29 @@ When using the shorter environment path shown above:
 & "$BookForgeVenv\Scripts\python.exe" .\main.py
 ```
 
+## Build for Windows
+
+Install the development requirements, then build the canonical one-folder GUI configuration:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r .\requirements-dev.txt
+.\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm .\BookForge.spec
+```
+
+The build appears under:
+
+```text
+dist\BookForge\BookForge.exe
+```
+
+Run it with:
+
+```powershell
+.\dist\BookForge\BookForge.exe
+```
+
+`BookForge.spec` includes the Python runtime, PySide6 modules, application code, and BookForge assets. It creates a GUI executable without a console window. It deliberately does not include Calibre executables or DLLs.
+
 ## Calibre dependency
 
 BookForge delegates conversion and metadata extraction to Calibre rather than implementing e-book parsers and a conversion engine:
@@ -105,7 +134,7 @@ Calibre ebook-meta / ebook-convert
 converted e-book
 ```
 
-The current development version requires Calibre to be installed separately. Calibre is not bundled with BookForge. At startup, BookForge automatically looks for `ebook-convert` and `ebook-meta` in `PATH` and in common Calibre installation locations on Windows. If `ebook-convert` is missing, the application still opens and displays a clear warning, but conversion cannot begin. If only `ebook-meta` is missing or metadata extraction fails for one file, that queue item remains convertible and its Metadata action reports that metadata is unavailable.
+Calibre is not bundled with BookForge. In source and packaged modes, BookForge looks for `ebook-convert` and `ebook-meta` in `PATH` and common Windows installation locations, including `C:\Program Files\Calibre2`. If `ebook-convert` is missing, the application still opens and displays a clear warning, but conversion cannot begin. If only `ebook-meta` is missing or metadata extraction fails for one file, that queue item remains convertible and its Metadata action reports that metadata is unavailable.
 
 After installing Calibre, restart PowerShell and verify the command with:
 
@@ -116,7 +145,7 @@ Get-Command ebook-meta
 ebook-meta --version
 ```
 
-Calibre is open-source software distributed under GPLv3. Packaging and distribution of the conversion engine will be addressed in a later release phase.
+Calibre is open-source software distributed under GPLv3 and remains a separately installed dependency.
 
 ## Usage
 
@@ -130,6 +159,14 @@ Calibre is open-source software distributed under GPLv3. Packaging and distribut
 8. During conversion, use **Cancel current** to stop only the active book or **Cancel batch** to stop it and cancel every waiting book.
 9. Expand **Details** to inspect bounded Calibre output. Use **Retry** or **Retry failed** to return unsuccessful items to Ready. Metadata overrides survive retry.
 10. Use **Open file** or **Open folder** on any completed row.
+
+Desktop shortcuts:
+
+- Ctrl+O: add books with the multi-file picker
+- Ctrl+Enter: convert all ready books when conversion is available
+- Ctrl+Q: exit BookForge
+
+BookForge remembers only application preferences: safe window geometry, a manually chosen output folder, the global output-format selection, and the overwrite policy. It does not persist the queue, books, logs, metadata, or covers. If a saved window position is no longer visible after a monitor change, BookForge falls back to a centered window. If a saved output folder no longer exists, automatic first-book-folder behavior resumes.
 
 **Ask** prompts for each existing output and offers Replace, Skip, or Cancel batch. **Replace all** replaces existing outputs without further prompts, but never bypasses source-path or internal queue-collision protection. **Skip all** marks items whose outputs already exist as Skipped without starting Calibre.
 
@@ -179,11 +216,13 @@ BookForge does not artificially restrict input/output combinations. The practica
 
 ## Development status
 
-BookForge 0.6.0 is currently at Phase 6. Per-book asynchronous metadata and cover extraction, a compact metadata action and native editor dialog, validated cover replacement, in-memory overrides, conversion integration, and metadata resource cleanup are implemented. Phase 5 batch cancellation, real progress, logs, retry, overwrite policies, and transactional output behavior remain in place.
+BookForge 0.9.0 includes the polished compact desktop interface, persistent non-sensitive settings, application icon and metadata, native menu and shortcuts, About dialog, packaged startup diagnostics, and a canonical PyInstaller one-folder GUI build. Metadata, cover, batch, cancellation, progress, retry, overwrite, and transactional output behavior remain in place.
 
 A real sequential batch has been verified on Windows with a separately installed copy of Calibre, including generated TXT → EPUB and TXT → PDF fixtures with spaces and Cyrillic characters in their paths. A generated TXT → EPUB metadata smoke test also verified an overridden title, author, generated PNG cover, and byte-for-byte source preservation. Completed rows retain **Open file** and **Open folder** actions.
 
-The other listed formats and input/output combinations are supported by the current interface and conversion pipeline, but they have not all been manually verified with real books yet.
+The canonical PyInstaller one-folder build was also launched directly on Windows without a console. Its drop-area picker queued additional generated TXT files, Calibre metadata controls opened successfully, and a two-book TXT → EPUB batch produced non-empty outputs while leaving both sources unchanged. The completed output actions were enabled and invoked, and window geometry persisted across a packaged-app restart.
+
+The other listed formats and input/output combinations are supported by the current interface and conversion pipeline, but they have not all been manually verified with real books yet. Generated build and smoke-test results are environment-specific and should be repeated before distributing a release.
 
 ## Current limitations
 
@@ -196,7 +235,9 @@ The other listed formats and input/output combinations are supported by the curr
 - Metadata extraction and output behavior depend on what Calibre supports for each input/output format. Metadata-poor formats can receive Calibre-inferred defaults, and Calibre may normalize values such as language codes.
 - BookForge passes changed, non-empty metadata through Calibre's supported conversion options. Reliably clearing an existing field to an empty value is not supported in this phase and Calibre may retain the source value.
 - Replacing a cover is supported; explicitly removing an existing cover is not exposed because it cannot be applied consistently across the supported formats.
-- There is no conversion history or packaged executable.
+- The one-folder build has no installer, code signing, or automatic update mechanism yet.
+- The original development icon should receive a final visual review before 1.0.
+- There is no conversion history, library database, Send to Kindle integration, or device synchronization.
 - Calibre must be installed separately.
 
 ## DRM

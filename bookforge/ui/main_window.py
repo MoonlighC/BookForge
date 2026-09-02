@@ -7,8 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QThread, QThreadPool, QTimer, Qt, QUrl, Slot
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtCore import QSettings, QThread, QThreadPool, QTimer, Qt, QUrl, Slot
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from bookforge import __version__
 from bookforge.core.batch import (
     OverwriteDecision,
     OverwritePolicy,
@@ -47,6 +48,8 @@ from bookforge.core.metadata import (
     MetadataService,
     MetadataStatus,
 )
+from bookforge.resources import application_icon
+from bookforge.settings import ApplicationSettings
 from bookforge.ui.batch_worker import (
     BatchCancellation,
     BatchConversionWorker,
@@ -70,9 +73,11 @@ class MainWindow(QMainWindow):
         self,
         converter: ConverterService | None = None,
         metadata_service: MetadataService | None = None,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__()
         self._converter = converter or ConverterService()
+        self._settings = ApplicationSettings(settings)
         self._queue = ConversionQueue()
         self._metadata_service = metadata_service or MetadataService()
         self._metadata_pool = QThreadPool(self)
@@ -92,22 +97,48 @@ class MainWindow(QMainWindow):
         self._current_total = 0
 
         self.setWindowTitle("BookForge")
-        self.resize(960, 850)
-        self.setMinimumSize(780, 700)
+        self.setWindowIcon(application_icon())
+        self.resize(1100, 750)
+        self.setMinimumSize(780, 620)
+        self._build_menu()
         self._build_ui()
+        self._restore_settings()
         self._show_calibre_state()
         self._update_queue_ui()
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        self._add_books_action = QAction("Add books…", self)
+        self._add_books_action.setShortcut(QKeySequence("Ctrl+O"))
+        self._add_books_action.setStatusTip("Add one or more books to the queue")
+        self._add_books_action.triggered.connect(self._browse_input)
+        self._exit_action = QAction("Exit", self)
+        self._exit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        self._exit_action.triggered.connect(self.close)
+        file_menu.addAction(self._add_books_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._exit_action)
+
+        help_menu = self.menuBar().addMenu("&Help")
+        self._about_action = QAction("About BookForge", self)
+        self._about_action.triggered.connect(self._show_about)
+        help_menu.addAction(self._about_action)
+
+        self._convert_action = QAction("Convert all", self)
+        self._convert_action.setShortcut(QKeySequence("Ctrl+Enter"))
+        self._convert_action.triggered.connect(self._start_conversion)
+        self.addAction(self._convert_action)
 
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(34, 24, 34, 24)
-        root.setSpacing(12)
+        root.setContentsMargins(28, 20, 28, 20)
+        root.setSpacing(10)
 
         title = QLabel("BookForge")
         title.setObjectName("appTitle")
-        subtitle = QLabel("Convert a shelf of books, one reliable step at a time")
+        subtitle = QLabel("Simple e-book conversion for Kindle & more")
         subtitle.setObjectName("subtitle")
         root.addWidget(title)
         root.addWidget(subtitle)
@@ -129,6 +160,8 @@ class MainWindow(QMainWindow):
         self._queue_heading.setObjectName("sectionTitle")
         self._retry_failed_button = QPushButton("Retry failed")
         self._clear_button = QPushButton("Clear queue")
+        self._retry_failed_button.setAccessibleName("Retry failed books")
+        self._clear_button.setAccessibleName("Clear conversion queue")
         self._retry_failed_button.clicked.connect(self._retry_failed)
         self._clear_button.clicked.connect(self._clear_queue)
         queue_header.addWidget(self._queue_heading)
@@ -141,6 +174,9 @@ class MainWindow(QMainWindow):
         self._queue_scroll.setObjectName("queueScroll")
         self._queue_scroll.setWidgetResizable(True)
         self._queue_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._queue_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._queue_scroll.setMinimumHeight(190)
         self._queue_container = QWidget()
         self._queue_container.setObjectName("queueContainer")
@@ -165,15 +201,35 @@ class MainWindow(QMainWindow):
         formats_label = QLabel("Set every book to")
         formats_label.setObjectName("sectionLabel")
         self._set_all_combo = QComboBox()
-        for output_format in OUTPUT_FORMATS:
+        self._set_all_combo.setObjectName("globalFormatCombo")
+        self._set_all_combo.setAccessibleName("Format for every book")
+        for index, output_format in enumerate(OUTPUT_FORMATS):
             self._set_all_combo.addItem(output_format.label, output_format.extension)
+            self._set_all_combo.setItemData(
+                index,
+                output_format.description,
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._set_all_combo.currentIndexChanged.connect(
+            self._update_global_format_tooltip
+        )
         self._apply_all_button = QPushButton("Apply")
         self._apply_all_button.clicked.connect(self._apply_format_to_all)
         overwrite_label = QLabel("Existing files")
         overwrite_label.setObjectName("sectionLabel")
         self._overwrite_combo = QComboBox()
-        for policy in OverwritePolicy:
-            self._overwrite_combo.addItem(policy.value, policy)
+        self._overwrite_combo.setObjectName("overwritePolicyCombo")
+        self._overwrite_combo.setAccessibleName("Existing files policy")
+        policy_hints = {
+            OverwritePolicy.ASK: "Ask before replacing each existing output",
+            OverwritePolicy.REPLACE_ALL: "Replace existing outputs in this batch",
+            OverwritePolicy.SKIP_ALL: "Skip books whose outputs already exist",
+        }
+        for index, policy in enumerate(OverwritePolicy):
+            self._overwrite_combo.addItem(policy.value, policy.value)
+            self._overwrite_combo.setItemData(
+                index, policy_hints[policy], Qt.ItemDataRole.ToolTipRole
+            )
         formats_row.addWidget(formats_label)
         formats_row.addWidget(self._set_all_combo)
         formats_row.addWidget(self._apply_all_button)
@@ -186,8 +242,10 @@ class MainWindow(QMainWindow):
         folder_label.setObjectName("sectionLabel")
         self._output_folder = QLineEdit()
         self._output_folder.setReadOnly(True)
+        self._output_folder.setAccessibleName("Output folder")
         self._output_folder.setPlaceholderText("Add a book to choose its folder")
         self._browse_folder_button = QPushButton("Browse")
+        self._browse_folder_button.setAccessibleName("Browse for output folder")
         self._browse_folder_button.clicked.connect(self._browse_output_folder)
         folder_row.addWidget(folder_label)
         folder_row.addWidget(self._output_folder, 1)
@@ -212,6 +270,7 @@ class MainWindow(QMainWindow):
         self._cancel_batch_button.setObjectName("dangerButton")
         self._convert_button = QPushButton("Convert all")
         self._convert_button.setObjectName("primaryButton")
+        self._convert_button.setAccessibleName("Convert all ready books")
         self._cancel_current_button.clicked.connect(self._cancel_current)
         self._cancel_batch_button.clicked.connect(self._cancel_batch)
         self._convert_button.clicked.connect(self._start_conversion)
@@ -220,6 +279,61 @@ class MainWindow(QMainWindow):
         footer.addWidget(self._cancel_batch_button)
         footer.addWidget(self._convert_button)
         root.addLayout(footer)
+        self._update_global_format_tooltip()
+
+    @Slot(int)
+    def _update_global_format_tooltip(self, _index: int = -1) -> None:
+        index = self._set_all_combo.currentIndex()
+        description = self._set_all_combo.itemData(
+            index, Qt.ItemDataRole.ToolTipRole
+        )
+        self._set_all_combo.setToolTip(str(description or "Choose an output format"))
+
+    def _restore_settings(self) -> None:
+        valid_formats = {output_format.extension for output_format in OUTPUT_FORMATS}
+        output_format = self._settings.global_format(valid_formats, "azw3")
+        format_index = self._set_all_combo.findData(output_format)
+        if format_index >= 0:
+            self._set_all_combo.setCurrentIndex(format_index)
+
+        valid_policies = {policy.value for policy in OverwritePolicy}
+        policy_value = self._settings.overwrite_policy(
+            valid_policies, OverwritePolicy.ASK.value
+        )
+        policy_index = self._overwrite_combo.findData(policy_value)
+        if policy_index >= 0:
+            self._overwrite_combo.setCurrentIndex(policy_index)
+
+        output_folder = self._settings.output_folder()
+        if output_folder is not None:
+            self._output_folder.setText(str(output_folder))
+            self._output_folder_is_automatic = False
+
+        self._settings.restore_geometry(self)
+
+    def _save_settings(self) -> None:
+        self._settings.save_geometry(self)
+        output_folder: Path | None = None
+        if not self._output_folder_is_automatic and self._output_folder.text():
+            candidate = Path(self._output_folder.text()).expanduser()
+            if candidate.is_dir():
+                output_folder = candidate.resolve()
+        self._settings.save_output_folder(output_folder)
+        policy_value = str(self._overwrite_combo.currentData())
+        self._settings.save_conversion_choices(
+            str(self._set_all_combo.currentData()), policy_value
+        )
+
+    @Slot()
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About BookForge",
+            f"<b>BookForge</b><br>Version {__version__}<br><br>"
+            "A simple personal desktop e-book converter built with Python, "
+            "PySide6, and Calibre.<br><br>"
+            "Calibre is a separate dependency.",
+        )
 
     def _show_calibre_state(self) -> None:
         if self._converter.calibre_available:
@@ -559,8 +673,10 @@ class MainWindow(QMainWindow):
         self._sync_row(item.item_id)
 
     def _selected_overwrite_policy(self) -> OverwritePolicy:
-        policy = self._overwrite_combo.currentData()
-        return policy if isinstance(policy, OverwritePolicy) else OverwritePolicy.ASK
+        try:
+            return OverwritePolicy(str(self._overwrite_combo.currentData()))
+        except ValueError:
+            return OverwritePolicy.ASK
 
     def _ask_overwrite(self, output_path: Path) -> OverwriteDecision:
         dialog = QMessageBox(self)
@@ -703,6 +819,7 @@ class MainWindow(QMainWindow):
 
     def _set_batch_locked(self, locked: bool) -> None:
         self._drop_area.setDisabled(locked)
+        self._add_books_action.setDisabled(locked)
         has_retryable = any(
             item.status in _RETRYABLE_STATUSES for item in self._queue.items
         )
@@ -714,6 +831,7 @@ class MainWindow(QMainWindow):
         self._overwrite_combo.setDisabled(locked or len(self._queue) == 0)
         self._browse_folder_button.setDisabled(locked)
         self._convert_button.setDisabled(locked)
+        self._convert_action.setDisabled(locked)
         self._cancel_current_button.setVisible(locked)
         self._cancel_batch_button.setVisible(locked)
         self._cancel_current_button.setEnabled(locked and not self._batch_cancel_requested)
@@ -740,7 +858,9 @@ class MainWindow(QMainWindow):
             and not self._batch_active
         )
         self._convert_button.setEnabled(can_convert)
+        self._convert_action.setEnabled(can_convert)
         self._clear_button.setEnabled(count > 0 and not self._batch_active)
+        self._clear_button.setVisible(count > 0)
         self._retry_failed_button.setEnabled(has_retryable and not self._batch_active)
         self._retry_failed_button.setVisible(has_retryable)
         self._set_all_combo.setEnabled(count > 0 and not self._batch_active)
@@ -748,6 +868,7 @@ class MainWindow(QMainWindow):
         self._overwrite_combo.setEnabled(count > 0 and not self._batch_active)
         self._browse_folder_button.setEnabled(not self._batch_active)
         self._drop_area.setEnabled(not self._batch_active)
+        self._add_books_action.setEnabled(not self._batch_active)
         self._cancel_current_button.setVisible(self._batch_active)
         self._cancel_batch_button.setVisible(self._batch_active)
 
@@ -825,5 +946,6 @@ class MainWindow(QMainWindow):
                 self._cancel_batch()
             event.ignore()
             return
+        self._save_settings()
         self._shutdown_metadata()
         super().closeEvent(event)

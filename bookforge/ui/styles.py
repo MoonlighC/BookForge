@@ -1,5 +1,7 @@
 """Application-wide Qt stylesheet."""
 
+from bookforge.resources import resource_path
+
 APP_STYLESHEET = """
 QWidget {
     background: #f5f7fb;
@@ -10,6 +12,24 @@ QWidget {
 
 QMainWindow {
     background: #f5f7fb;
+}
+
+QMenuBar {
+    background: #ffffff;
+    border-bottom: 1px solid #e4e7ec;
+    padding: 2px 6px;
+}
+
+QMenuBar::item {
+    background: transparent;
+    border-radius: 5px;
+    padding: 5px 9px;
+}
+
+QMenuBar::item:selected,
+QMenu::item:selected {
+    background: #edf3ff;
+    color: #244f9f;
 }
 
 QLabel#appTitle {
@@ -65,8 +85,12 @@ QFrame#dropArea {
 
 QFrame#dropArea:hover,
 QFrame#dropArea[dragActive="true"] {
-    background: #f3f7ff;
+    background: #f1f6ff;
     border-color: #4f7ee8;
+}
+
+QFrame#dropArea[dragActive="true"] {
+    border-style: solid;
 }
 
 QFrame#controlsPanel,
@@ -122,6 +146,11 @@ QLabel#queueStatus {
     padding: 4px 9px;
 }
 
+QLabel#queueStatus[queueState="ready"] {
+    background: #eef2f7;
+    color: #475467;
+}
+
 QLabel#queueStatus[queueState="waiting"] {
     background: #fff5d9;
     color: #815b00;
@@ -143,8 +172,8 @@ QLabel#queueStatus[queueState="failed"] {
 }
 
 QLabel#queueStatus[queueState="cancelled"] {
-    background: #f2f4f7;
-    color: #475467;
+    background: #fff4e5;
+    color: #854a0e;
 }
 
 QLabel#queueStatus[queueState="skipped"] {
@@ -161,7 +190,7 @@ QLabel#queueError {
 QLabel#dropIcon {
     background: transparent;
     color: #4f7ee8;
-    font-size: 38px;
+    font-size: 32px;
     font-weight: 300;
 }
 
@@ -208,14 +237,40 @@ QLineEdit {
     selection-background-color: #4f7ee8;
 }
 
+QComboBox {
+    padding-right: 34px;
+}
+
 QComboBox:focus,
 QLineEdit:focus {
     border: 1px solid #4f7ee8;
 }
 
 QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 30px;
+    background: #f8fafc;
     border: none;
-    width: 28px;
+    border-left: 1px solid #e4e7ec;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+
+QComboBox::down-arrow {
+    image: url("__BOOKFORGE_COMBO_ARROW__");
+    width: 10px;
+    height: 7px;
+}
+
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    border: 1px solid #c7ced8;
+    border-radius: 7px;
+    outline: none;
+    padding: 4px;
+    selection-background-color: #e8f0ff;
+    selection-color: #1d2939;
 }
 
 QComboBox#itemFormatCombo {
@@ -241,7 +296,7 @@ QPushButton:hover {
 }
 
 QPushButton#primaryButton {
-    min-height: 48px;
+    min-height: 44px;
     background: #3568d4;
     border: 1px solid #3568d4;
     border-radius: 10px;
@@ -260,12 +315,12 @@ QPushButton#primaryButton:disabled {
 }
 
 QPushButton#removeButton {
-    min-width: 28px;
-    max-width: 28px;
-    min-height: 28px;
-    max-height: 28px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
     border: none;
-    border-radius: 14px;
+    border-radius: 16px;
     color: #667085;
     font-size: 20px;
     padding: 0;
@@ -352,6 +407,14 @@ QLabel#statusLabel {
     font-size: 13px;
 }
 
+QToolTip {
+    background: #ffffff;
+    border: 1px solid #c7ced8;
+    border-radius: 5px;
+    color: #344054;
+    padding: 5px 7px;
+}
+
 QFrame#resultPanel {
     background: #ffffff;
     border: 1px solid #dfe4ec;
@@ -380,3 +443,8 @@ QLabel#resultLocation {
     font-size: 12px;
 }
 """
+
+
+def application_stylesheet() -> str:
+    arrow = resource_path("assets/chevron-down.svg").as_posix()
+    return APP_STYLESHEET.replace("__BOOKFORGE_COMBO_ARROW__", arrow)

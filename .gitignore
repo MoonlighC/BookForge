@@ -14,5 +14,7 @@ venv/
 
 build/
 dist/
+*.spec
+!BookForge.spec
 *.egg-info/
 *.log
