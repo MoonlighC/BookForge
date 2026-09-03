@@ -22,10 +22,15 @@ Designed for simple local conversion—no accounts, cloud uploads, telemetry, or
 
 ## Supported formats
 
-| Category | Formats |
-| --- | --- |
-| Input | EPUB, AZW3, MOBI, FB2, DOCX, TXT, PDF |
-| Output | AZW3, EPUB, MOBI, PDF, FB2, DOCX, TXT |
+BookForge supports conversion between:
+
+- EPUB
+- AZW3
+- MOBI
+- FB2
+- DOCX
+- TXT
+- PDF
 
 BookForge lets you convert between these formats wherever Calibre supports the selected combination. AZW3 is a convenient Kindle-oriented option, although compatibility ultimately depends on the device and source material.
 
