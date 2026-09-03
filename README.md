@@ -86,7 +86,7 @@ Book files are processed locally using the installed Calibre tools. BookForge do
 
 ## Development
 
-BookForge requires Windows, Python 3.12 or later, and a separate Calibre installation when running from source.
+Clone the repository and install the project dependencies before running BookForge locally.
 
 ```powershell
 git clone https://github.com/MoonlighC/BookForge.git
